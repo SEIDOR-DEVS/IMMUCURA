@@ -1,5 +1,5 @@
 version: "2"
-authtoken: 2djK0anyCLSyoW06PDRG0ODIauo_6TJwSt7PJMyz7pUgKL4NG
+authtoken: 2djJuZ1tCyiAS1SljuhZhSPeWf6_3dK1DkhSSfFGVL3HMfuMb
 tunnels:
   vercel:
     proto: http
