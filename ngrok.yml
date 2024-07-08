@@ -1,0 +1,6 @@
+version: "2"
+authtoken: 2djK0anyCLSyoW06PDRG0ODIauo_6TJwSt7PJMyz7pUgKL4NG
+tunnels:
+  vercel:
+    proto: http
+    addr: https://immucuravercel.vercel.app/

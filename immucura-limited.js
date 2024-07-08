@@ -25,9 +25,16 @@ if (!fs.existsSync(DOWNLOAD_DIR)) {
     fs.mkdirSync(DOWNLOAD_DIR);
 }
 
+// Endpoint para recibir el webhook de Monday.com
 app.post('/', async (req, res) => {
     const event = req.body.event;
     console.log(`Webhook received: ${JSON.stringify(req.body, null, 2)}`);
+
+    // Responder al desafío del webhook de Monday.com
+    if (req.body.challenge) {
+        console.log("Respondendo al desafío del webhook");
+        return res.status(200).json({ challenge: req.body.challenge });
+    }
 
     try {
         if (event.type === 'create_pulse') {
