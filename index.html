@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logs</title>
+    <style>
+        #logs {
+            white-space: pre-wrap; /* Permite el uso de saltos de línea */
+            font-family: monospace; /* Usa una fuente monoespaciada para los logs */
+            line-height: 1.5; /* Mejora la legibilidad */
+            height: 80vh; /* Altura del contenedor de logs */
+            overflow-y: scroll; /* Habilita el scroll vertical */
+        }
+    </style>
+</head>
+<body>
+<h1>Logs</h1>
+<div id="logs"></div>
+
+<script>
+    const evtSource = new EventSource('/logs');
+    const logContainer = document.getElementById('logs');
+
+    evtSource.onmessage = function(event) {
+        const newLog = document.createElement('div');
+        newLog.innerHTML = event.data;
+        logContainer.appendChild(newLog);
+        logContainer.scrollTop = logContainer.scrollHeight;
+    };
+</script>
+</body>
+</html>

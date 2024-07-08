@@ -25,14 +25,42 @@ if (!fs.existsSync(DOWNLOAD_DIR)) {
     fs.mkdirSync(DOWNLOAD_DIR);
 }
 
-// Endpoint para recibir el webhook de Monday.com
+const logs = [];
+let logListeners = [];
+
+const addLog = (log) => {
+    const formattedLog = JSON.stringify(log, null, 2).replace(/\n/g, '<br>').replace(/ /g, '&nbsp;');
+    logs.push(formattedLog);
+    if (logs.length > 100) logs.shift();
+    logListeners.forEach(listener => listener(formattedLog));
+};
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/logs', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    logs.forEach(log => res.write(`data: ${log}\n\n`));
+
+    const sendLog = (log) => res.write(`data: ${log}\n\n`);
+
+    logListeners.push(sendLog);
+
+    req.on('close', () => {
+        logListeners = logListeners.filter(listener => listener !== sendLog);
+    });
+});
+
 app.post('/', async (req, res) => {
     const event = req.body.event;
-    console.log(`Webhook received: ${JSON.stringify(req.body, null, 2)}`);
+    addLog({ message: 'Webhook received', data: req.body });
 
-    // Responder al desafío del webhook de Monday.com
     if (req.body.challenge) {
-        console.log("Respondendo al desafío del webhook");
+        addLog({ message: 'Responding to webhook challenge', challenge: req.body.challenge });
         return res.status(200).json({ challenge: req.body.challenge });
     }
 
@@ -42,29 +70,29 @@ app.post('/', async (req, res) => {
             const files = event.columnValues?.upload_file__1?.files;
 
             if (email && files && files.length > 0) {
-                console.log(`Email obtained from create_pulse event: ${email}`);
+                addLog({ message: 'Email and files found in create_pulse event', email, files });
 
                 for (const file of files) {
                     const assetId = file.assetId;
                     const fileName = file.name;
                     try {
                         const fileUrl = await getPublicUrl(assetId);
-                        console.log(`Public URL of the file: ${fileUrl}`);
+                        addLog({ message: 'Public URL obtained', fileUrl });
                         const filePath = await downloadFile(fileUrl, fileName);
 
                         await processFileUpload(email, filePath);
                     } catch (error) {
-                        console.error('Error getting public URL or downloading the file:', error);
+                        addLog({ message: 'Error getting public URL or downloading the file', error });
                     }
                 }
             } else {
-                console.log('Email or files not found in the event.');
+                addLog({ message: 'Email or files not found in the event' });
             }
         }
 
         res.status(200).send('Webhook received and processed.');
     } catch (error) {
-        console.error('Error processing the webhook:', error);
+        addLog({ message: 'Error processing the webhook', error });
         res.status(500).send('Error processing the webhook.');
     }
 });
@@ -119,27 +147,27 @@ async function downloadFile(fileUrl, fileName) {
 
         return new Promise((resolve, reject) => {
             writer.on('finish', () => {
-                console.log(`File downloaded: ${filePath}`);
+                addLog({ message: 'File downloaded', filePath });
                 resolve(filePath);
             });
             writer.on('error', reject);
         });
     } catch (error) {
-        console.error('Error downloading the file:', error);
+        addLog({ message: 'Error downloading the file', error });
     }
 }
 
 async function processFileUpload(email, filePath) {
     const items = await findItemByEmail([1524952207], email);
     if (items.length > 0) {
-        console.log(`Email ${email} exists in board 1524952207. Items: ${JSON.stringify(items)}`);
+        addLog({ message: 'Email exists in board', email, items });
         for (const item of items) {
-            console.log(`Uploading file to item ${item.id}`);
+            addLog({ message: 'Uploading file to item', itemId: item.id });
             await uploadAndAddFileToItem(item.id, filePath);
-            console.log(`File uploaded to item ${item.id}`);
+            addLog({ message: 'File uploaded to item', itemId: item.id });
         }
     } else {
-        console.log(`Email ${email} not found in board 1524952207`);
+        addLog({ message: 'Email not found in board', email });
     }
 }
 
@@ -183,14 +211,13 @@ async function findItemByEmail(boardIds, email) {
 
             try {
                 const response = await axios(config);
-                console.log("Response from item search:", JSON.stringify(response.data, null, 2));
+                addLog({ message: 'Response from item search', response: response.data });
                 const data = response.data.data.items_page_by_column_values;
                 allItems = allItems.concat(data.items);
                 cursor = data.cursor;
                 moreItems = cursor !== null;
-                console.log(`Retrieved ${data.items.length} items, total: ${allItems.length}`);
             } catch (error) {
-                console.error("Error searching item by email:", error);
+                addLog({ message: 'Error searching item by email', error });
                 moreItems = false;
             }
         }
@@ -223,9 +250,9 @@ async function uploadAndAddFileToItem(itemId, filePath) {
             }
         });
 
-        console.log('File added:', response.data);
+        addLog({ message: 'File added to column', response: response.data });
     } catch (error) {
-        console.error('Error in uploadAndAddFileToItem:', error.response ? error.response.data : error.message);
+        addLog({ message: 'Error in uploadAndAddFileToItem', error: error.response ? error.response.data : error.message });
     }
 }
 
