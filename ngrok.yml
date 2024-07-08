@@ -4,3 +4,4 @@ tunnels:
   vercel:
     proto: http
     addr: https://immucuravercel.vercel.app/
+

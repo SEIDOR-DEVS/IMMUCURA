@@ -37,7 +37,7 @@ app.post('/', async (req, res) => {
     }
 
     try {
-        if (event.type === 'create_pulse') {
+        if (event && event.type === 'create_pulse') {
             const email = event.columnValues?.e_mail__1?.email;
             const files = event.columnValues?.upload_file__1?.files;
 
