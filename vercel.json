@@ -9,7 +9,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "immucura-limited.js"
+      "dest": "/immucura-limited.js"
     }
   ]
 }
