@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import cron from 'node-cron';
 
 dotenv.config();
 
@@ -15,7 +16,6 @@ const limit = 3; // Limitar a 3 pacientes
 // Obtener el nombre de archivo de este script para calcular __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 
 // Función para obtener el Access Token utilizando el Refresh Token
 async function getAccessToken() {
@@ -120,11 +120,14 @@ async function getPatients() {
     }
 }
 
-// Llamada a la función getPatients para iniciar el proceso
+// Programa el cron job para que se ejecute cada 5 minutos
+cron.schedule('*/5 * * * *', () => {
+    console.log('Running the getPatients function every 5 minutes');
+    getPatients();
+});
+
+// Llamada inicial a la función getPatients para iniciar el proceso
 getPatients();
-
-
-
 
 
 /*async function makeAPILeads() {
