@@ -1,7 +1,12 @@
 version: "2"
 authtoken: 2djJuZ1tCyiAS1SljuhZhSPeWf6_3dK1DkhSSfFGVL3HMfuMb
 tunnels:
-  vercel:
+  router:
+    addr: 3000
     proto: http
-    addr: https://immucuravercel.vercel.app/
-
+  immucura-limited:
+    addr: 3001
+    proto: http
+  immucura-germany:
+    addr: 3002
+    proto: http
