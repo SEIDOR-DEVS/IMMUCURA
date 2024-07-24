@@ -11,12 +11,11 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3002;
 const API_KEY = process.env.API_KEY;
 const API_URL = 'https://api.monday.com/v2';
 const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
 
-// Define __dirname in the context of an ES module
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DOWNLOAD_DIR = path.join(__dirname, 'files-uploaded');
@@ -55,7 +54,7 @@ app.get('/logs', (req, res) => {
     });
 });
 
-app.post('/', async (req, res) => {
+app.post('/webhook', async (req, res) => {
     const event = req.body.event;
     addLog({ message: 'Webhook received', data: req.body });
 
@@ -158,7 +157,7 @@ async function downloadFile(fileUrl, fileName) {
 }
 
 async function processFileUpload(email, filePath) {
-    const items = await findItemByEmail([1524952207], email);
+    const items = await findItemByEmail([1556223297], email);
     if (items.length > 0) {
         addLog({ message: 'Email exists in board', email, items });
         for (const item of items) {
