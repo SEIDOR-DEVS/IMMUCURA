@@ -13,7 +13,7 @@ const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const refresh_token = process.env.REFRESH_TOKEN;
 const api_domain = process.env.API_DOMAIN;
-const limit = 3; // Limitar a 3 pacientes
+const limit = 3; // Limit to 3 patients
 const API_KEY = process.env.API_KEY;
 const API_URL = process.env.API_URL;
 const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
@@ -24,17 +24,17 @@ const __dirname = path.dirname(__filename);
 const uploadedFilesPath = path.join(__dirname, 'uploaded-files.json');
 let uploadedFiles = {};
 
-// Cargar archivos subidos previamente
+// Load previously uploaded files
 if (fs.existsSync(uploadedFilesPath)) {
     uploadedFiles = JSON.parse(fs.readFileSync(uploadedFilesPath));
 }
 
-// Guardar archivos subidos
+// Save uploaded files
 function saveUploadedFiles() {
     fs.writeFileSync(uploadedFilesPath, JSON.stringify(uploadedFiles, null, 2));
 }
 
-// Función para obtener el Access Token utilizando el Refresh Token
+// Function to get Access Token using Refresh Token
 async function getAccessToken() {
     try {
         const response = await axios.post('https://accounts.zoho.eu/oauth/v2/token', null, {
@@ -51,7 +51,7 @@ async function getAccessToken() {
     }
 }
 
-// Función para descargar un adjunto
+// Function to download an attachment
 async function downloadAttachment(moduleApiName, recordId, attachmentId, filePath, access_token) {
     try {
         const response = await axios.get(`${api_domain}/crm/v2/${moduleApiName}/${recordId}/Attachments/${attachmentId}`, {
@@ -73,7 +73,7 @@ async function downloadAttachment(moduleApiName, recordId, attachmentId, filePat
     }
 }
 
-// Función para obtener los adjuntos de un paciente
+// Function to get attachments of a patient
 async function getAttachments(recordId, email, access_token) {
     try {
         const response = await axios.get(`${api_domain}/crm/v2/PatientsNew/${recordId}/Attachments`, {
@@ -100,7 +100,7 @@ async function getAttachments(recordId, email, access_token) {
     }
 }
 
-// Función para buscar un ítem por email en Monday.com
+// Function to search for an item by email in Monday.com
 async function findItemByEmail(boardIds, email) {
     if (!email) {
         throw new Error("Email is undefined");
@@ -160,7 +160,7 @@ async function findItemByEmail(boardIds, email) {
     return items.flat();
 }
 
-// Función para subir archivos a un ítem en Monday.com
+// Function to upload files to an item in Monday.com
 async function uploadAndAddFileToItem(itemId, filePath, columnId) {
     const mutation = `
         mutation($file: File!) {
@@ -187,7 +187,7 @@ async function uploadAndAddFileToItem(itemId, filePath, columnId) {
     }
 }
 
-// Función para procesar la subida de archivos
+// Function to process file uploads
 async function processFileUpload(email, filePath) {
     const boardColumnMap = {
         1524952207: 'dup__of_upload_file__1',
@@ -214,7 +214,7 @@ async function processFileUpload(email, filePath) {
     }
 }
 
-// Función para obtener la información de los pacientes y subir los archivos a Monday.com
+// Function to get patient information and upload files to Monday.com
 async function getPatients() {
     const access_token = await getAccessToken();
 
@@ -229,7 +229,7 @@ async function getPatients() {
                 Authorization: `Zoho-oauthtoken ${access_token}`
             },
             params: {
-                per_page: limit // Limitar a 3 pacientes
+                per_page: limit // Limit to 3 patients
             }
         });
 
@@ -278,7 +278,7 @@ async function getPatients() {
     }
 }
 
-// Configurar servidor Express y cron job
+// Set up Express server and cron job
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -290,10 +290,10 @@ app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
 
-cron.schedule('*/5 * * * *', () => {
-    console.log('Running the getPatients function every 5 minutes');
+cron.schedule('*/10 * * * *', () => {
+    console.log('Running the getPatients function every 10 minutes');
     getPatients();
 });
 
-// Llamada inicial a la función getPatients para iniciar el proceso
+// Initial call to getPatients function to start the process
 getPatients();
