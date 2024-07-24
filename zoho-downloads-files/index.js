@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import cron from 'node-cron';
+import FormData from 'form-data';
 
 dotenv.config();
 
@@ -12,6 +12,9 @@ const client_secret = process.env.CLIENT_SECRET;
 const refresh_token = process.env.REFRESH_TOKEN;
 const api_domain = process.env.API_DOMAIN;
 const limit = 3; // Limitar a 3 pacientes
+const API_KEY = process.env.API_KEY;
+const API_URL = process.env.API_URL;
+const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
 
 // Obtener el nombre de archivo de este script para calcular __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -74,6 +77,7 @@ async function getAttachments(recordId, email, access_token) {
         for (const attachment of attachments) {
             const filePath = path.join(dirPath, attachment.File_Name);
             await downloadAttachment('PatientsNew', recordId, attachment.id, filePath, access_token);
+            console.log(`Attachment downloaded: ${filePath}`);
         }
         return attachments;
     } catch (error) {
@@ -82,7 +86,109 @@ async function getAttachments(recordId, email, access_token) {
     }
 }
 
-// Función para obtener la información de los pacientes
+// Función para buscar un ítem por email en Monday.com
+async function findItemByEmail(boardIds, email) {
+    if (!email) {
+        throw new Error("Email is undefined");
+    }
+
+    const items = await Promise.all(boardIds.map(async boardId => {
+        let allItems = [];
+        let cursor = null;
+        let moreItems = true;
+
+        while (moreItems) {
+            const query = JSON.stringify({
+                query: `
+                    query {
+                        items_page_by_column_values (limit: 500, board_id: ${boardId}, columns: [{column_id: "e_mail9__1", column_values: ["${email}"]}], cursor: ${cursor ? `"${cursor}"` : null}) {
+                            cursor
+                            items {
+                                id
+                                name
+                                column_values(ids: ["e_mail9__1"]) {
+                                    text
+                                }
+                            }
+                        }
+                    }
+                `
+            });
+
+            const config = {
+                method: 'post',
+                url: API_URL,
+                headers: {
+                    'Authorization': `Bearer ${API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                data: query
+            };
+
+            try {
+                const response = await axios(config);
+                console.log('Response from item search:', response.data);
+                const data = response.data.data.items_page_by_column_values;
+                allItems = allItems.concat(data.items);
+                cursor = data.cursor;
+                moreItems = cursor !== null;
+            } catch (error) {
+                console.error('Error searching item by email:', error);
+                moreItems = false;
+            }
+        }
+
+        return allItems.filter(item =>
+            item.column_values.some(col => col.text === email)
+        ).map(item => ({ boardId, id: item.id }));
+    }));
+
+    return items.flat();
+}
+
+// Función para subir archivos a un ítem en Monday.com
+async function uploadAndAddFileToItem(itemId, filePath) {
+    const mutation = `
+        mutation($file: File!) {
+            add_file_to_column (item_id: ${itemId}, column_id: "dup__of_upload_file__1", file: $file) {
+                id
+            }
+        }
+    `;
+    const formData = new FormData();
+    formData.append('query', mutation);
+    formData.append('variables[file]', fs.createReadStream(filePath));
+
+    try {
+        const response = await axios.post(FILE_UPLOAD_URL, formData, {
+            headers: {
+                'Authorization': `Bearer ${API_KEY}`,
+                ...formData.getHeaders()
+            }
+        });
+
+        console.log('File added to column:', response.data);
+    } catch (error) {
+        console.error('Error in uploadAndAddFileToItem:', error.response ? error.response.data : error.message);
+    }
+}
+
+// Función para procesar la subida de archivos
+async function processFileUpload(email, filePath) {
+    const items = await findItemByEmail([1524952207], email);
+    if (items.length > 0) {
+        console.log(`Email found in board for ${email}:`, items);
+        for (const item of items) {
+            console.log(`Uploading file to item ${item.id}`);
+            await uploadAndAddFileToItem(item.id, filePath);
+            console.log(`File uploaded to item ${item.id}`);
+        }
+    } else {
+        console.log(`Email not found in board for ${email}`);
+    }
+}
+
+// Función para obtener la información de los pacientes y subir los archivos a Monday.com
 async function getPatients() {
     const access_token = await getAccessToken();
 
@@ -104,6 +210,7 @@ async function getPatients() {
         // Formatear y mostrar los datos en una tabla
         const patients = response.data.data;
         for (const patient of patients) {
+            console.log('Patient data:', patient);
             const attachments = await getAttachments(patient.id, patient.Email, access_token);
             console.table({
                 'Full Name': patient.Full_Name,
@@ -114,21 +221,28 @@ async function getPatients() {
                 'Lead Status': patient.Lead_Status,
                 'Attachments': attachments.map(att => att.File_Name).join(', ')
             });
+
+            // Procesar la subida de archivos a Monday.com
+            const dirPath = path.join(__dirname, 'patients-attachments', patient.Email);
+            fs.readdir(dirPath, async (err, files) => {
+                if (err) {
+                    console.error('Error reading directory:', err);
+                    return;
+                }
+
+                for (const file of files) {
+                    const filePath = path.join(dirPath, file);
+                    await processFileUpload(patient.Email, filePath);
+                }
+            });
         }
     } catch (error) {
         console.error('Error making API call:', error.response ? error.response.data : error.message);
     }
 }
 
-// Programa el cron job para que se ejecute cada 5 minutos
-cron.schedule('*/5 * * * *', () => {
-    console.log('Running the getPatients function every 5 minutes');
-    getPatients();
-});
-
-// Llamada inicial a la función getPatients para iniciar el proceso
+// Llamada a la función getPatients para iniciar el proceso
 getPatients();
-
 
 /*async function makeAPILeads() {
     const access_token = await getAccessToken();
@@ -165,8 +279,6 @@ getPatients();
 // CALL FUNCTION makeAPILeads
 makeAPILeads();
 */
-
-
 
 // Función para obtener la lista de módulos y verificar el nombre del módulo de pacientes
 /*async function getModules() {
