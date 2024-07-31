@@ -4,8 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import FormData from 'form-data';
-import cron from 'node-cron';
 import express from 'express';
+import cron from 'node-cron';
 
 dotenv.config();
 
@@ -13,7 +13,6 @@ const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const refresh_token = process.env.REFRESH_TOKEN;
 const api_domain = process.env.API_DOMAIN;
-const limit = 3; // Limit to 3 patients
 const API_KEY = process.env.API_KEY;
 const API_URL = process.env.API_URL;
 const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
@@ -24,17 +23,20 @@ const __dirname = path.dirname(__filename);
 const uploadedFilesPath = path.join(__dirname, 'uploaded-files.json');
 let uploadedFiles = {};
 
-// Load previously uploaded files
 if (fs.existsSync(uploadedFilesPath)) {
-    uploadedFiles = JSON.parse(fs.readFileSync(uploadedFilesPath));
+    try {
+        const fileData = fs.readFileSync(uploadedFilesPath, 'utf8');
+        uploadedFiles = JSON.parse(fileData || '{}');
+    } catch (error) {
+        console.error('Error reading or parsing uploaded-files.json:', error);
+        uploadedFiles = {};
+    }
 }
 
-// Save uploaded files
 function saveUploadedFiles() {
     fs.writeFileSync(uploadedFilesPath, JSON.stringify(uploadedFiles, null, 2));
 }
 
-// Function to get Access Token using Refresh Token
 async function getAccessToken() {
     try {
         const response = await axios.post('https://accounts.zoho.eu/oauth/v2/token', null, {
@@ -51,7 +53,6 @@ async function getAccessToken() {
     }
 }
 
-// Function to download an attachment
 async function downloadAttachment(moduleApiName, recordId, attachmentId, filePath, access_token) {
     try {
         const response = await axios.get(`${api_domain}/crm/v2/${moduleApiName}/${recordId}/Attachments/${attachmentId}`, {
@@ -73,7 +74,6 @@ async function downloadAttachment(moduleApiName, recordId, attachmentId, filePat
     }
 }
 
-// Function to get attachments of a patient
 async function getAttachments(recordId, email, access_token) {
     try {
         const response = await axios.get(`${api_domain}/crm/v2/PatientsNew/${recordId}/Attachments`, {
@@ -100,7 +100,6 @@ async function getAttachments(recordId, email, access_token) {
     }
 }
 
-// Function to search for an item by email in Monday.com
 async function findItemByEmail(boardIds, email) {
     if (!email) {
         throw new Error("Email is undefined");
@@ -141,7 +140,12 @@ async function findItemByEmail(boardIds, email) {
 
             try {
                 const response = await axios(config);
-                console.log('Response from item search:', response.data);
+                if (response.data.errors) {
+                    console.log('Response from item search:', response.data.errors);
+                    moreItems = false;
+                    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds before retrying
+                    continue;
+                }
                 const data = response.data.data.items_page_by_column_values;
                 allItems = allItems.concat(data.items);
                 cursor = data.cursor;
@@ -160,7 +164,6 @@ async function findItemByEmail(boardIds, email) {
     return items.flat();
 }
 
-// Function to upload files to an item in Monday.com
 async function uploadAndAddFileToItem(itemId, filePath, columnId) {
     const mutation = `
         mutation($file: File!) {
@@ -187,7 +190,6 @@ async function uploadAndAddFileToItem(itemId, filePath, columnId) {
     }
 }
 
-// Function to process file uploads
 async function processFileUpload(email, filePath) {
     const boardColumnMap = {
         1524952207: 'dup__of_upload_file__1',
@@ -214,7 +216,6 @@ async function processFileUpload(email, filePath) {
     }
 }
 
-// Function to get patient information and upload files to Monday.com
 async function getPatients() {
     const access_token = await getAccessToken();
 
@@ -223,62 +224,76 @@ async function getPatients() {
         return;
     }
 
-    try {
-        const response = await axios.get(`${api_domain}/crm/v2/PatientsNew`, {
-            headers: {
-                Authorization: `Zoho-oauthtoken ${access_token}`
-            },
-            params: {
-                per_page: limit // Limit to 3 patients
+    let page = 1;
+    let morePages = true;
+
+    while (morePages) {
+        try {
+            const response = await axios.get(`${api_domain}/crm/v2/PatientsNew`, {
+                headers: {
+                    Authorization: `Zoho-oauthtoken ${access_token}`
+                },
+                params: {
+                    page: page
+                }
+            });
+
+            const patients = response.data.data;
+            if (patients.length === 0) {
+                morePages = false;
+                break;
             }
-        });
 
-        const patients = response.data.data;
-        for (const patient of patients) {
-            try {
-                console.log('Patient data:', patient);
-                const attachments = await getAttachments(patient.id, patient.Email, access_token);
-                console.table({
-                    'Full Name': patient.Full_Name,
-                    'Email': patient.Email,
-                    'Phone': patient.Phone,
-                    'Country': patient.Country,
-                    'Lead Source': patient.Lead_Source,
-                    'Lead Status': patient.Lead_Status,
-                    'Attachments': attachments.map(att => att.File_Name).join(', ')
-                });
+            for (const patient of patients) {
+                try {
+                    console.log('Patient data:', patient);
+                    const attachments = await getAttachments(patient.id, patient.Email, access_token);
+                    console.table({
+                        'Full Name': patient.Full_Name,
+                        'Email': patient.Email,
+                        'Phone': patient.Phone,
+                        'Country': patient.Country,
+                        'Lead Source': patient.Lead_Source,
+                        'Lead Status': patient.Lead_Status,
+                        'Attachments': attachments.map(att => att.File_Name).join(', ')
+                    });
 
-                const dirPath = path.join(__dirname, 'patients-attachments', patient.Email);
-                fs.readdir(dirPath, async (err, files) => {
-                    if (err) {
-                        console.error('Error reading directory:', err);
-                        return;
-                    }
-
-                    for (const file of files) {
-                        const filePath = path.join(dirPath, file);
-                        if (!uploadedFiles[patient.Email]) {
-                            uploadedFiles[patient.Email] = [];
+                    const dirPath = path.join(__dirname, 'patients-attachments', patient.Email);
+                    fs.readdir(dirPath, async (err, files) => {
+                        if (err) {
+                            console.error('Error reading directory:', err);
+                            return;
                         }
-                        if (!uploadedFiles[patient.Email].includes(file)) {
-                            await processFileUpload(patient.Email, filePath);
-                            uploadedFiles[patient.Email].push(file);
-                            saveUploadedFiles();
-                        } else {
-                            console.log(`File ${file} already uploaded for ${patient.Email}`);
+
+                        for (const file of files) {
+                            const filePath = path.join(dirPath, file);
+                            if (!uploadedFiles[patient.Email]) {
+                                uploadedFiles[patient.Email] = [];
+                            }
+                            if (!uploadedFiles[patient.Email].includes(file)) {
+                                await processFileUpload(patient.Email, filePath);
+                                uploadedFiles[patient.Email].push(file);
+                                saveUploadedFiles();
+                            } else {
+                                console.log(`File ${file} already uploaded for ${patient.Email}`);
+                            }
                         }
-                    }
-                });
-            } catch (error) {
-                console.error(`Error processing patient ${patient.Email}:`, error);
+                    });
+                } catch (error) {
+                    console.error(`Error processing patient ${patient.Email}:`, error);
+                }
             }
+
+            page++;
+        } catch (error) {
+            console.error('Error making API call:', error.response ? error.response.data : error.message);
+            morePages = false;
         }
-    } catch (error) {
-        console.error('Error making API call:', error.response ? error.response.data : error.message);
     }
+
+    console.log("WORK FINISHED !!!");
 }
 
-// Set up Express server and cron job
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -290,10 +305,13 @@ app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
 
-cron.schedule('*/10 * * * *', () => {
-    console.log('Running the getPatients function every 10 minutes');
+// Schedule the cron job to run at 6am and 2pm Paris time
+cron.schedule('0 6,14 * * *', () => {
+    console.log('Running the getPatients function at 6am and 2pm Paris time');
     getPatients();
+}, {
+    timezone: "Europe/Paris"
 });
 
-// Initial call to getPatients function to start the process
+// Initial call to getPatients to start the process
 getPatients();

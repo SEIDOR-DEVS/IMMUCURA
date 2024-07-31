@@ -2,10 +2,10 @@
   "name": "immucura",
   "version": "1.0.0",
   "type": "module",
-  "main": "immucura-germany.js",
+  "main": "",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node immucura-germany.js"
+    "start": "node  index.js"
   },
   "author": "",
   "license": "ISC",
