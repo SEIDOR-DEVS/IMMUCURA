@@ -1,35 +1,41 @@
-import express from 'express';
 import axios from 'axios';
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
 import FormData from 'form-data';
+import express from 'express';
 
 dotenv.config();
-const app = express();
 
-app.use(express.json());
-const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY;
-const API_URL = 'https://api.monday.com/v2';
+const API_URL = process.env.API_URL;
 const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
 
-// Define __dirname in the context of an ES module
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const app = express();
+const PORT = process.env.PORT || 3001; // Cambiar a 3001 para el nuevo proxy
+
+app.use(express.json());
+
+// Asegurarse de que el directorio para archivos subidos existe
 const DOWNLOAD_DIR = path.join(__dirname, 'files-uploaded');
 if (!fs.existsSync(DOWNLOAD_DIR)) {
-    fs.mkdirSync(DOWNLOAD_DIR);
+    fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 }
 
 // Endpoint para recibir el webhook de Monday.com
-app.post('/', async (req, res) => {
-    const event = req.body.event;
-    console.log(`Webhook received: ${JSON.stringify(req.body, null, 2)}`);
+app.post('/immucura-webhooks', async (req, res) => {
+    // Responder al desafío del webhook de Monday.com
     if (req.body.challenge) {
+        console.log('Responding to challenge');
         return res.status(200).json({ challenge: req.body.challenge });
     }
+
+    const event = req.body.event;
+    console.log(`Webhook received: ${JSON.stringify(req.body, null, 2)}`);
 
     try {
         if (event && event.type === 'create_pulse') {
@@ -44,7 +50,7 @@ app.post('/', async (req, res) => {
                     try {
                         const fileUrl = await getPublicUrl(assetId);
                         console.log(`Public URL of the file: ${fileUrl}`);
-                        const filePath = await downloadFile(fileUrl, fileName);
+                        const filePath = await downloadFile(fileUrl, fileName, email);
                         await processFileUpload(email, filePath);
                     } catch (error) {
                         console.error('Error getting public URL or downloading the file:', error);
@@ -60,6 +66,8 @@ app.post('/', async (req, res) => {
         res.status(500).send('Error processing the webhook.');
     }
 });
+
+// Funciones auxiliares
 
 async function getPublicUrl(assetId) {
     const query = JSON.stringify({
@@ -92,10 +100,12 @@ async function getPublicUrl(assetId) {
     }
 }
 
-async function downloadFile(fileUrl, fileName) {
-    const date = new Date();
-    const timestamp = `${date.getDate().toString().padStart(2, '0')}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getFullYear()}-${date.getHours().toString().padStart(2, '0')}h-${date.getMinutes().toString().padStart(2, '0')}m-${date.getSeconds().toString().padStart(2, '0')}s`;
-    const filePath = path.join(DOWNLOAD_DIR, `${fileName}-${timestamp}`);
+async function downloadFile(fileUrl, fileName, email) {
+    const dirPath = path.join(DOWNLOAD_DIR, email);
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+    const filePath = path.join(dirPath, fileName);
     const writer = fs.createWriteStream(filePath);
     try {
         const response = await axios({
@@ -143,7 +153,7 @@ async function findItemByEmail(boardIds, email) {
             const query = JSON.stringify({
                 query: `
                     query {
-                        items_page_by_column_values (limit: 500, board_id: ${boardId}, columns: [{column_id: "e_mail9__1", column_values: ["${email}"]}], cursor: ${cursor ? `"${cursor}"` : null}) {
+                        items_page_by_column_values (board_id: ${boardId}, columns: [{column_id: "e_mail9__1", column_values: ["${email}"]}], cursor: ${cursor ? `"${cursor}"` : null}) {
                             cursor
                             items {
                                 id
@@ -212,3 +222,4 @@ async function uploadAndAddFileToItem(itemId, filePath) {
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
 });
+
