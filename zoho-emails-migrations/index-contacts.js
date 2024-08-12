@@ -28,19 +28,24 @@ const CONFIDENTIALITY_NOTICE = [
     /CONFIDENTIALITY NOTICE:([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
     /IMMUCURA LIMITED([\s\S]*?)(?=(\n\n|\s*$))/g,
     /\[crm\\img_id:[^\]]*\]/g,
-    /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g, // Eliminar bloques de "AVISO LEGAL"
-    /confidencial sometida a secreto profesional([\s\S]*?)(?=expresa de Immucura Med S.L.|$)/gi, // Eliminar "confidencial sometida a secreto profesional" hasta "expresa de Immucura Med S.L."
-    /expresa de Immucura Med S.L.([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/gi, // Eliminar "expresa de Immucura Med S.L." hasta "PROTECCIÓN DE DATOS"
-    /LEGAL WARNING:([\s\S]*?)(?=This message and its attachments|$)/g, // Eliminar bloques de "LEGAL WARNING"
-    /PROTECCIÓN DE DATOS([\s\S]*?)(?=(\n\n|\s*$))/gi // Eliminar "PROTECCIÓN DE DATOS" hasta final del texto o doble línea
+    /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g,
+    /confidencial sometida a secreto profesional([\s\S]*?)(?=expresa de Immucura Med S.L.|$)/gi,
+    /expresa de Immucura Med S.L.([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/gi,
+    /LEGAL WARNING:([\s\S]*?)(?=This message and its attachments|$)/g,
+    /PROTECCIÓN DE DATOS([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Br3athe hereby informs you that([\s\S]*?)(?=Confidentiality:|$)/gi,
+    /Confidentiality:([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /In compliance with the European Union General Data Protection Regulation \(GDPR\), you receive this message([\s\S]*?)(?=Headquarter:|$)/gi,
+    /Headquarter:([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /This message and its attachments are addressed exclusively([\s\S]*?)(?=(\n\n|\s*$))/gi
 ];
 
 // Board and column mapping for Monday.com
 const boardColumnMap = {
-    1565914428: 'archivo__1',
-    1565676276: 'archivo__1',
-    1499741852: 'archivo__1',
-    1499741853: 'archivo__1'
+    1565914428: 'archivo4__1',
+    1565676276: 'archivo7__1',
+    1499741852: 'archivo1__1',
+    1499741853: 'archivo8__1'
 };
 
 // Column mapping for email fields in Monday.com
