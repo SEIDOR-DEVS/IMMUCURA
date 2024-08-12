@@ -27,24 +27,49 @@ const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
 const CONFIDENTIALITY_NOTICE = [
     /CONFIDENTIALITY NOTICE:([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
     /IMMUCURA LIMITED([\s\S]*?)(?=(\n\n|\s*$))/g,
-    /\[crm\\img_id:[^\]]*\]/g
+    /\[crm\\img_id:[^\]]*\]/g,
+    /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g, // Eliminar bloques de "AVISO LEGAL"
+    /confidencial sometida a secreto profesional([\s\S]*?)(?=expresa de Immucura Med S.L.|$)/gi, // Eliminar "confidencial sometida a secreto profesional" hasta "expresa de Immucura Med S.L."
+    /expresa de Immucura Med S.L.([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/gi, // Eliminar "expresa de Immucura Med S.L." hasta "PROTECCIÓN DE DATOS"
+    /LEGAL WARNING:([\s\S]*?)(?=This message and its attachments|$)/g, // Eliminar bloques de "LEGAL WARNING"
+    /PROTECCIÓN DE DATOS([\s\S]*?)(?=(\n\n|\s*$))/gi // Eliminar "PROTECCIÓN DE DATOS" hasta final del texto o doble línea
 ];
 
 // Board and column mapping for Monday.com
 const boardColumnMap = {
-    1524952207: 'archivo9__1', // Column ID for board 1524952207
-    1556223297: 'archivo2__1', // Column ID for board 1556223297
-    1565753842: 'archivo__1',  // Column ID for board 1565753842
-    1504994976: 'archivo__1'   // Column ID for board 1504994976
+    1565914428: 'archivo__1',
+    1565676276: 'archivo__1',
+    1499741852: 'archivo__1',
+    1499741853: 'archivo__1'
 };
 
 // Column mapping for email fields in Monday.com
 const emailColumnMap = {
-    1524952207: 'e_mail9__1',
-    1556223297: 'e_mail9__1',
-    1565753842: 'contact_email', // Column ID for emails in board 1565753842
-    1504994976: 'contact_email'  // Column ID for emails in board 1504994976
+    1565914428: 'contact_email',
+    1565676276: 'lead_email',
+    1499741852: 'lead_email',
+    1499741853: 'contact_email'
 };
+
+// Ruta y carga de archivos subidos previamente
+const uploadedFilesPath = path.join(__dirname, 'uploaded-files.json');
+let uploadedFiles = {};
+
+// Cargar los archivos ya subidos desde uploaded-files.json
+if (fs.existsSync(uploadedFilesPath)) {
+    try {
+        const fileData = fs.readFileSync(uploadedFilesPath, 'utf8');
+        uploadedFiles = JSON.parse(fileData || '{}');
+    } catch (error) {
+        console.error('Error al leer o analizar uploaded-files.json:', error);
+        uploadedFiles = {};
+    }
+}
+
+// Función para guardar los archivos subidos en uploaded-files.json
+function saveUploadedFiles() {
+    fs.writeFileSync(uploadedFilesPath, JSON.stringify(uploadedFiles, null, 2));
+}
 
 // Function to obtain the access token from Zoho
 async function getAccessToken() {
@@ -74,51 +99,51 @@ async function getAccessToken() {
     }
 }
 
-// Function to get all patients from Zoho with pagination
-async function getAllPatients(accessToken) {
-    let allPatients = [];
+// Function to get all contacts from Zoho with pagination
+async function getAllContacts(accessToken) {
+    let allContacts = [];
     let page = 1;
     let morePages = true;
 
-    console.log('Fetching all patients from Zoho CRM...');
+    console.log('Fetching all contacts from Zoho CRM...');
 
     while (morePages) {
         try {
-            const response = await axios.get(`${API_DOMAIN}/crm/v3/PatientsNew`, {
+            const response = await axios.get(`${API_DOMAIN}/crm/v3/Contacts`, {
                 headers: {
                     Authorization: `Zoho-oauthtoken ${accessToken}`
                 },
                 params: {
-                    fields: 'id,Name,Email',
+                    fields: 'id,Full_Name,Email',
                     page: page,
                     per_page: 200 // Adjust per page to handle more records at once
                 }
             });
 
-            const patients = response.data.data;
-            if (patients.length > 0) {
-                allPatients = allPatients.concat(patients);
-                console.log(`Page ${page} fetched with ${patients.length} patients.`);
+            const contacts = response.data.data;
+            if (contacts.length > 0) {
+                allContacts = allContacts.concat(contacts);
+                console.log(`Page ${page} fetched with ${contacts.length} contacts.`);
                 page++;
             } else {
                 morePages = false;
-                console.log('No more patients to fetch.');
+                console.log('No more contacts to fetch.');
             }
         } catch (error) {
-            console.error('Error fetching patients:', error.response ? error.response.data : error.message);
+            console.error('Error fetching contacts:', error.response ? error.response.data : error.message);
             morePages = false;
         }
     }
 
-    console.log(`Total patients fetched: ${allPatients.length}`);
-    return allPatients;
+    console.log(`Total contacts fetched: ${allContacts.length}`);
+    return allContacts;
 }
 
-// Function to get emails of a specific patient from Zoho
-async function getEmailsOfPatient(moduleApiName, patientId, accessToken) {
+// Function to get emails of a specific contact from Zoho
+async function getEmailsOfContact(moduleApiName, contactId, accessToken) {
     try {
-        console.log(`Fetching emails for patient ID: ${patientId}`);
-        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${patientId}/Emails`;
+        console.log(`Fetching emails for contact ID: ${contactId}`);
+        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${contactId}/Emails`;
         const response = await axios.get(url, {
             headers: {
                 Authorization: `Zoho-oauthtoken ${accessToken}`
@@ -126,29 +151,29 @@ async function getEmailsOfPatient(moduleApiName, patientId, accessToken) {
         });
 
         if (response.data && response.data.Emails) {
-            console.log(`Found ${response.data.Emails.length} emails for patient ID: ${patientId}`);
+            console.log(`Found ${response.data.Emails.length} emails for contact ID: ${contactId}`);
             return response.data.Emails.map(email => ({
                 subject: email.subject,
                 from: email.from.email,
                 to: email.to.map(to => to.email).join(', '),
                 messageId: email.message_id,
                 content: email.content || 'No content available',
-                sentTime: email.sent_time || 'No date available'
+                sentTime: email.time || 'No date available' // Ensure you capture this date
             }));
         } else {
             console.log('No emails found or no data available:', response.data);
             return [];
         }
     } catch (error) {
-        console.error('Error fetching emails for patient:', error.response ? error.response.data : error.message);
+        console.error('Error fetching emails for contact:', error.response ? error.response.data : error.message);
         return [];
     }
 }
 
 // Function to fetch the content of an email from Zoho
-async function getEmailContent(moduleApiName, patientId, messageId, accessToken) {
+async function getEmailContent(moduleApiName, contactId, messageId, accessToken) {
     try {
-        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${patientId}/Emails/${messageId}`;
+        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${contactId}/Emails/${messageId}`;
         const response = await axios.get(url, {
             headers: {
                 Authorization: `Zoho-oauthtoken ${accessToken}`
@@ -189,9 +214,9 @@ function cleanEmailContent(content) {
 }
 
 // Function to create PDF files from emails
-function createPDF(patientName, emailContents, outputDir) {
+function createPDF(contactName, emailContents, outputDir) {
     const doc = new PDFDocument();
-    const outputFilePath = path.join(outputDir, `emails-${patientName}.pdf`);
+    const outputFilePath = path.join(outputDir, `emails-${contactName}.pdf`);
 
     doc.pipe(fs.createWriteStream(outputFilePath));
 
@@ -199,7 +224,7 @@ function createPDF(patientName, emailContents, outputDir) {
         if (index > 0) {
             doc.text('\n\n\n'); // Dejar tres espacios antes del siguiente correo
         }
-        const sentTimeFormatted = moment(content.sent_time).format('MMMM Do YYYY, h:mm:ss a');
+        const sentTimeFormatted = moment(content.sentTime).format('MMMM Do YYYY, h:mm:ss a'); // Use the sentTime from the email
         doc.fontSize(12).text(`MAIL ${index + 1}:\nSent: ${sentTimeFormatted}\nSubject: ${content.subject}\nFrom: ${content.from}\nTo: ${content.to}\n\nContent:\n${content.content}\n\n`, {
             align: 'left',
             lineGap: 2
@@ -207,7 +232,7 @@ function createPDF(patientName, emailContents, outputDir) {
     });
 
     doc.end();
-    console.log(`PDF created for patient: ${patientName}`);
+    console.log(`PDF created for contact: ${contactName}`);
 }
 
 // Function to find an item by email in Monday.com
@@ -253,7 +278,7 @@ async function findItemByEmail(boardIds, email) {
             try {
                 const response = await axios(config);
                 if (response.data.errors) {
-                    console.log('Response from item search:', response.data.errors);
+                    console.error('GraphQL Response Errors:', response.data.errors);
                     moreItems = false;
                     await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds before retrying
                     continue;
@@ -263,7 +288,7 @@ async function findItemByEmail(boardIds, email) {
                 cursor = data.cursor;
                 moreItems = cursor !== null;
             } catch (error) {
-                console.error('Error searching item by email:', error);
+                console.error('Error searching item by email:', error.response ? error.response.data : error.message);
                 moreItems = false;
             }
         }
@@ -321,9 +346,23 @@ async function processFileUpload(email, filePath) {
         for (const item of items) {
             const columnId = boardColumnMap[item.boardId];
             if (columnId) {
-                console.log(`Uploading file to item ${item.id} on board ${item.boardId}`);
-                await uploadAndAddFileToItem(item.id, filePath, columnId);
-                console.log(`File uploaded to item ${item.id} on board ${item.boardId}`);
+                const fileName = path.basename(filePath);
+                // Verificar si el archivo ya fue subido para este tablero y ítem
+                if (!uploadedFiles[item.boardId]) {
+                    uploadedFiles[item.boardId] = {};
+                }
+                if (!uploadedFiles[item.boardId][email]) {
+                    uploadedFiles[item.boardId][email] = [];
+                }
+                if (uploadedFiles[item.boardId][email].includes(fileName)) {
+                    console.log(`File ${fileName} already uploaded for ${email} on board ${item.boardId}`);
+                } else {
+                    console.log(`Uploading file to item ${item.id} on board ${item.boardId}`);
+                    await uploadAndAddFileToItem(item.id, filePath, columnId);
+                    uploadedFiles[item.boardId][email].push(fileName);
+                    saveUploadedFiles(); // Guardar los archivos subidos después de cada subida
+                    console.log(`File uploaded to item ${item.id} on board ${item.boardId}`);
+                }
             } else {
                 console.log(`Column ID not found for board ${item.boardId}`);
             }
@@ -335,64 +374,70 @@ async function processFileUpload(email, filePath) {
 
 // Main function
 async function main() {
-    const accessToken = await getAccessToken();
-    if (accessToken) {
-        const patients = await getAllPatients(accessToken);
-        console.log(`Processing ${patients.length} patients...`);
-        for (const patient of patients) {
-            const fullName = patient.Name || 'Unknown Name';
-            const patientEmail = patient.Email || 'no-email';
-            console.log(`\nProcessing patient: ${fullName} (${patientEmail})`);
+    let accessToken = await getAccessToken();
+    if (!accessToken) {
+        console.log("Failed to obtain an access token.");
+        process.exit(1);
+    }
 
-            const emails = await getEmailsOfPatient('PatientsNew', patient.id, accessToken);
-            if (emails.length > 0) {
-                const emailContents = [];
-                for (const [index, email] of emails.entries()) {
-                    console.log(`\nProcessing email ${index + 1} for ${patientEmail}:`);
-                    console.log(`Subject: ${email.subject}`);
-                    console.log(`From: ${email.from}`);
-                    console.log(`To: ${email.to}`);
-                    console.log(`Sent: ${email.sent_time}`);
+    const contacts = await getAllContacts(accessToken);
+    console.log(`Processing ${contacts.length} contacts...`);
 
-                    // Fetch email content
-                    const emailContent = await getEmailContent('PatientsNew', patient.id, email.messageId, accessToken);
+    for (const contact of contacts) {
+        const fullName = contact.Full_Name || 'Unknown Name';
+        const contactEmail = contact.Email || 'no-email';
+        console.log(`\nProcessing contact: ${fullName} (${contactEmail})`);
 
-                    // Clean and format email content
-                    const cleanedContent = cleanEmailContent(emailContent);
+        let emails = await getEmailsOfContact('Contacts', contact.id, accessToken);
 
-                    emailContents.push({
-                        subject: email.subject,
-                        from: email.from,
-                        to: email.to,
-                        content: cleanedContent,
-                        sentTime: email.sent_time
-                    });
+        // Retry fetching emails if the token has expired
+        if (emails.length === 0) {
+            console.log('Retrying email fetch with refreshed token...');
+            accessToken = await getAccessToken();
+            emails = await getEmailsOfContact('Contacts', contact.id, accessToken);
+        }
 
-                    // Display cleaned content
-                    console.log(`Content of email ${index + 1}:\n${cleanedContent}\n`);
-                }
+        if (emails.length > 0) {
+            const emailContents = [];
+            for (const [index, email] of emails.entries()) {
+                console.log(`\nProcessing email ${index + 1} for ${contactEmail}:`);
+                console.log(`Subject: ${email.subject}`);
+                console.log(`From: ${email.from}`);
+                console.log(`To: ${email.to}`);
+                console.log(`Sent: ${email.sentTime}`);
 
-                // Create directories if they do not exist
-                const baseDir = path.join(__dirname, 'mails-downloads');
-                const patientDir = path.join(baseDir, patientEmail);
-                if (!fs.existsSync(baseDir)) {
-                    fs.mkdirSync(baseDir);
-                }
-                if (!fs.existsSync(patientDir)) {
-                    fs.mkdirSync(patientDir);
-                }
+                const emailContent = await getEmailContent('Contacts', contact.id, email.messageId, accessToken);
+                const cleanedContent = cleanEmailContent(emailContent);
 
-                // Generate PDF file for this patient
-                const pdfPath = path.join(patientDir, `emails-${fullName}.pdf`);
-                createPDF(fullName, emailContents, patientDir);
+                emailContents.push({
+                    subject: email.subject,
+                    from: email.from,
+                    to: email.to,
+                    content: cleanedContent,
+                    sentTime: email.sentTime // Ensure the sentTime is used correctly
+                });
 
-                // Upload the PDF file to Monday.com board
-                await processFileUpload(patientEmail, pdfPath);
-            } else {
-                console.log(`No emails to display for patient: ${patientEmail}`);
+                console.log(`Content of email ${index + 1}:\n${cleanedContent}\n`);
             }
+
+            const baseDir = path.join(__dirname, 'mails-downloads');
+            const contactDir = path.join(baseDir, contactEmail);
+            if (!fs.existsSync(baseDir)) {
+                fs.mkdirSync(baseDir);
+            }
+            if (!fs.existsSync(contactDir)) {
+                fs.mkdirSync(contactDir);
+            }
+
+            const pdfPath = path.join(contactDir, `emails-${fullName}.pdf`);
+            createPDF(fullName, emailContents, contactDir);
+            await processFileUpload(contactEmail, pdfPath);
+        } else {
+            console.log(`No emails to display for contact: ${contactEmail}`);
         }
     }
+    console.log("TRABAJO TERMINADO");
+    process.exit(0);
 }
 
 main();

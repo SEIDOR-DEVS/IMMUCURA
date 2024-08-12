@@ -158,7 +158,7 @@ async function getEmailsOfContact(moduleApiName, contactId, accessToken) {
                 to: email.to.map(to => to.email).join(', '),
                 messageId: email.message_id,
                 content: email.content || 'No content available',
-                sentTime: email.sent_time || 'No date available'
+                sentTime: email.time || 'No date available' // Ensure you capture this date
             }));
         } else {
             console.log('No emails found or no data available:', response.data);
@@ -224,7 +224,7 @@ function createPDF(contactName, emailContents, outputDir) {
         if (index > 0) {
             doc.text('\n\n\n'); // Dejar tres espacios antes del siguiente correo
         }
-        const sentTimeFormatted = moment(content.sent_time).format('MMMM Do YYYY, h:mm:ss a');
+        const sentTimeFormatted = moment(content.sentTime).format('MMMM Do YYYY, h:mm:ss a'); // Use the sentTime from the email
         doc.fontSize(12).text(`MAIL ${index + 1}:\nSent: ${sentTimeFormatted}\nSubject: ${content.subject}\nFrom: ${content.from}\nTo: ${content.to}\n\nContent:\n${content.content}\n\n`, {
             align: 'left',
             lineGap: 2
@@ -404,7 +404,7 @@ async function main() {
                 console.log(`Subject: ${email.subject}`);
                 console.log(`From: ${email.from}`);
                 console.log(`To: ${email.to}`);
-                console.log(`Sent: ${email.sent_time}`);
+                console.log(`Sent: ${email.sentTime}`);
 
                 const emailContent = await getEmailContent('Contacts', contact.id, email.messageId, accessToken);
                 const cleanedContent = cleanEmailContent(emailContent);
@@ -414,7 +414,7 @@ async function main() {
                     from: email.from,
                     to: email.to,
                     content: cleanedContent,
-                    sentTime: email.sent_time
+                    sentTime: email.sentTime // Ensure the sentTime is used correctly
                 });
 
                 console.log(`Content of email ${index + 1}:\n${cleanedContent}\n`);
