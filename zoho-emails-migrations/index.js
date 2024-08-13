@@ -35,8 +35,12 @@ const CONFIDENTIALITY_NOTICE = [
     /Confidentiality:([\s\S]*?)(?=(\n\n|\s*$))/gi,
     /In compliance with the European Union General Data Protection Regulation \(GDPR\), you receive this message([\s\S]*?)(?=Headquarter:|$)/gi,
     /Headquarter:([\s\S]*?)(?=(\n\n|\s*$))/gi,
-    /This message and its attachments are addressed exclusively([\s\S]*?)(?=(\n\n|\s*$))/gi
+    /This message and its attachments are addressed exclusively([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Before printing this message([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Website: ([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Email: ([\s\S]*?)(?=(\n\n|\s*$))/gi,
 ];
+
 
 // Mapeo de columnas para Monday.com
 const boardColumnMap = {
@@ -98,10 +102,10 @@ async function getAccessToken() {
     }
 }
 
-// Función para obtener todos los leads desde Zoho con paginación
+// Función para obtener todos los leads desde Zoho con paginación usando page_token
 async function getAllLeads(accessToken) {
     let allLeads = [];
-    let page = 1;
+    let pageToken = null;
     let morePages = true;
 
     console.log('Fetching all leads from Zoho CRM...');
@@ -114,16 +118,17 @@ async function getAllLeads(accessToken) {
                 },
                 params: {
                     fields: 'id,Full_Name,Email',
-                    page: page,
-                    per_page: 200 // Ajusta el número de registros por página si es necesario
+                    page_token: pageToken,
+                    per_page: 200 // Máximo permitido por solicitud
                 }
             });
 
             const leads = response.data.data;
             if (leads.length > 0) {
                 allLeads = allLeads.concat(leads);
-                console.log(`Page ${page} fetched with ${leads.length} leads.`);
-                page++;
+                console.log(`Fetched ${leads.length} leads, total fetched: ${allLeads.length}`);
+                pageToken = response.data.info.next_token; // Obtener el siguiente token de página
+                morePages = pageToken !== undefined; // Continuar si hay un next_token
             } else {
                 morePages = false;
                 console.log('No more leads to fetch.');
@@ -139,6 +144,7 @@ async function getAllLeads(accessToken) {
 }
 
 // Función para obtener correos electrónicos de un lead específico desde Zoho
+// Función para obtener correos electrónicos de un lead específico desde Zoho
 async function getEmailsOfLead(moduleApiName, leadId, accessToken) {
     try {
         console.log(`Fetching emails for lead ID: ${leadId}`);
@@ -153,7 +159,7 @@ async function getEmailsOfLead(moduleApiName, leadId, accessToken) {
             console.log(`Found ${response.data.Emails.length} emails for lead ID: ${leadId}`);
             return response.data.Emails.map(email => ({
                 subject: email.subject,
-                from: `${email.from.user_name}<${email.from.email}>`,
+                from: `${email.from.email}`,
                 to: email.to.map(to => to.email).join(', '),
                 messageId: email.message_id,
                 sentTime: email.time || 'No date available'
@@ -167,6 +173,7 @@ async function getEmailsOfLead(moduleApiName, leadId, accessToken) {
         return [];
     }
 }
+
 
 // Función para obtener el contenido de un correo específico desde Zoho
 async function getEmailContent(moduleApiName, leadId, messageId, accessToken) {
@@ -195,20 +202,29 @@ async function getEmailContent(moduleApiName, leadId, messageId, accessToken) {
 }
 
 
-// Función para limpiar el contenido del correo electrónico
+// Function to clean email content
 function cleanEmailContent(content) {
     let cleanedContent = htmlToText(content, {
         wordwrap: 130,
-        preserveNewlines: true,
+        preserveNewlines: true
     });
 
-    CONFIDENTIALITY_NOTICE.forEach((regex) => {
+    CONFIDENTIALITY_NOTICE.forEach(regex => {
         cleanedContent = cleanedContent.replace(regex, '');
     });
 
-    // Remove multiple line breaks throughout the content
-    return cleanedContent.replace(/(\n\s*){3,}/g, '\n\n').trim();
+    // Generalizar la limpieza de la firma
+    cleanedContent = cleanedContent.replace(/(Mobile|Mob|Phone|T):.*?(\n|$)/gi, '$1: [number removed]\n');
+    cleanedContent = cleanedContent.replace(/Email:.*?(\n|$)/gi, 'Email: [email removed]\n');
+    cleanedContent = cleanedContent.replace(/www\..*?(\n|$)/gi, 'Website: [URL removed]\n');
+
+    // Eliminar saltos de línea múltiples en todo el contenido
+    cleanedContent = cleanedContent.replace(/(\n\s*){2,}/g, '\n\n');
+
+    return cleanedContent.trim();
 }
+
+
 
 // Función para crear archivos PDF a partir de correos electrónicos
 function createPDF(leadName, emailContents, leadEmail) {
@@ -228,17 +244,14 @@ function createPDF(leadName, emailContents, leadEmail) {
 
     emailContents.forEach((content, index) => {
         if (index > 0) {
-            doc.text('\n\n\n'); // Leave three spaces before the next email
+            doc.text('\n\n\n'); // Deja tres espacios antes del siguiente correo
         }
         const sentTimeFormatted = moment(content.sentTime).format('MMMM Do YYYY, h:mm:ss a');
-        const from = content.from.includes('<')
-            ? content.from.split('<')[0].trim() // Extract name only if email address is included
-            : content.from; // Use as is if no email address
 
         doc
             .fontSize(12)
             .text(
-                `MAIL ${index + 1}:\nSent: ${sentTimeFormatted}\nSubject: ${content.subject}\nFrom: ${from}\nTo: ${content.to}\n\nContent:\n${content.content}\n\n`,
+                `MAIL ${index + 1}:\nSent: ${sentTimeFormatted}\nSubject: ${content.subject}\nFrom: ${content.from}\nTo: ${content.to}\n\nContent:\n${content.content}\n\n\n\n`,
                 {
                     align: 'left',
                     lineGap: 2,
@@ -249,6 +262,7 @@ function createPDF(leadName, emailContents, leadEmail) {
     doc.end();
     console.log(`PDF created for lead: ${leadName}`);
 }
+
 
 // Función para encontrar un item por correo electrónico en Monday.com
 async function findItemByEmail(boardIds, email) {
