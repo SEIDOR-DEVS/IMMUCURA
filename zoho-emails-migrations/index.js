@@ -14,7 +14,6 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Environment variables for Zoho CRM and Monday.com
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
@@ -23,32 +22,32 @@ const API_KEY = process.env.API_KEY;
 const API_URL = process.env.API_URL;
 const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
 
-// Expresiones regulares para eliminar bloques de texto específicos
 const CONFIDENTIALITY_NOTICE = [
     /CONFIDENTIALITY NOTICE:([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
     /IMMUCURA LIMITED([\s\S]*?)(?=(\n\n|\s*$))/g,
     /\[crm\\img_id:[^\]]*\]/g,
-    /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g, // Eliminar bloques de "AVISO LEGAL"
-    /confidencial sometida a secreto profesional([\s\S]*?)(?=expresa de Immucura Med S.L.|$)/gi, // Eliminar "confidencial sometida a secreto profesional" hasta "expresa de Immucura Med S.L."
-    /expresa de Immucura Med S.L.([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/gi, // Eliminar "expresa de Immucura Med S.L." hasta "PROTECCIÓN DE DATOS"
-    /LEGAL WARNING:([\s\S]*?)(?=This message and its attachments|$)/g, // Eliminar bloques de "LEGAL WARNING"
-    /PROTECCIÓN DE DATOS([\s\S]*?)(?=(\n\n|\s*$))/gi // Eliminar "PROTECCIÓN DE DATOS" hasta final del texto o doble línea
+    /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g,
+    /confidencial sometida a secreto profesional([\s\S]*?)(?=expresa de Immucura Med S.L.|$)/gi,
+    /expresa de Immucura Med S.L.([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/gi,
+    /LEGAL WARNING:([\s\S]*?)(?=This message and its attachments|$)/g,
+    /PROTECCIÓN DE DATOS([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Br3athe hereby informs you that([\s\S]*?)(?=Confidentiality:|$)/gi,
+    /Confidentiality:([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /In compliance with the European Union General Data Protection Regulation \(GDPR\), you receive this message([\s\S]*?)(?=Headquarter:|$)/gi,
+    /Headquarter:([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /This message and its attachments are addressed exclusively([\s\S]*?)(?=(\n\n|\s*$))/gi
 ];
 
-// Board and column mapping for Monday.com
+// Mapeo de columnas para Monday.com
 const boardColumnMap = {
-    1565914428: 'archivo__1',
-    1565676276: 'archivo__1',
-    1499741852: 'archivo__1',
-    1499741853: 'archivo__1'
+    1565676276: 'archivo7__1',
+    1499741852: 'archivo1__1'
 };
 
-// Column mapping for email fields in Monday.com
+// Mapeo de columnas de correo electrónico en Monday.com
 const emailColumnMap = {
-    1565914428: 'contact_email',
     1565676276: 'lead_email',
-    1499741852: 'lead_email',
-    1499741853: 'contact_email'
+    1499741852: 'lead_email'
 };
 
 // Ruta y carga de archivos subidos previamente
@@ -71,7 +70,7 @@ function saveUploadedFiles() {
     fs.writeFileSync(uploadedFilesPath, JSON.stringify(uploadedFiles, null, 2));
 }
 
-// Function to obtain the access token from Zoho
+// Función para obtener el token de acceso desde Zoho
 async function getAccessToken() {
     try {
         const response = await axios.post(`https://accounts.zoho.eu/oauth/v2/token`, null, {
@@ -99,51 +98,51 @@ async function getAccessToken() {
     }
 }
 
-// Function to get all contacts from Zoho with pagination
-async function getAllContacts(accessToken) {
-    let allContacts = [];
+// Función para obtener todos los leads desde Zoho con paginación
+async function getAllLeads(accessToken) {
+    let allLeads = [];
     let page = 1;
     let morePages = true;
 
-    console.log('Fetching all contacts from Zoho CRM...');
+    console.log('Fetching all leads from Zoho CRM...');
 
     while (morePages) {
         try {
-            const response = await axios.get(`${API_DOMAIN}/crm/v3/Contacts`, {
+            const response = await axios.get(`${API_DOMAIN}/crm/v3/Leads`, {
                 headers: {
                     Authorization: `Zoho-oauthtoken ${accessToken}`
                 },
                 params: {
                     fields: 'id,Full_Name,Email',
                     page: page,
-                    per_page: 200 // Adjust per page to handle more records at once
+                    per_page: 200 // Ajusta el número de registros por página si es necesario
                 }
             });
 
-            const contacts = response.data.data;
-            if (contacts.length > 0) {
-                allContacts = allContacts.concat(contacts);
-                console.log(`Page ${page} fetched with ${contacts.length} contacts.`);
+            const leads = response.data.data;
+            if (leads.length > 0) {
+                allLeads = allLeads.concat(leads);
+                console.log(`Page ${page} fetched with ${leads.length} leads.`);
                 page++;
             } else {
                 morePages = false;
-                console.log('No more contacts to fetch.');
+                console.log('No more leads to fetch.');
             }
         } catch (error) {
-            console.error('Error fetching contacts:', error.response ? error.response.data : error.message);
+            console.error('Error fetching leads:', error.response ? error.response.data : error.message);
             morePages = false;
         }
     }
 
-    console.log(`Total contacts fetched: ${allContacts.length}`);
-    return allContacts;
+    console.log(`Total leads fetched: ${allLeads.length}`);
+    return allLeads;
 }
 
-// Function to get emails of a specific contact from Zoho
-async function getEmailsOfContact(moduleApiName, contactId, accessToken) {
+// Función para obtener correos electrónicos de un lead específico desde Zoho
+async function getEmailsOfLead(moduleApiName, leadId, accessToken) {
     try {
-        console.log(`Fetching emails for contact ID: ${contactId}`);
-        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${contactId}/Emails`;
+        console.log(`Fetching emails for lead ID: ${leadId}`);
+        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${leadId}/Emails`;
         const response = await axios.get(url, {
             headers: {
                 Authorization: `Zoho-oauthtoken ${accessToken}`
@@ -151,91 +150,107 @@ async function getEmailsOfContact(moduleApiName, contactId, accessToken) {
         });
 
         if (response.data && response.data.Emails) {
-            console.log(`Found ${response.data.Emails.length} emails for contact ID: ${contactId}`);
+            console.log(`Found ${response.data.Emails.length} emails for lead ID: ${leadId}`);
             return response.data.Emails.map(email => ({
                 subject: email.subject,
-                from: email.from.email,
+                from: `${email.from.user_name}<${email.from.email}>`,
                 to: email.to.map(to => to.email).join(', '),
                 messageId: email.message_id,
-                content: email.content || 'No content available',
-                sentTime: email.time || 'No date available' // Ensure you capture this date
+                sentTime: email.time || 'No date available'
             }));
         } else {
             console.log('No emails found or no data available:', response.data);
             return [];
         }
     } catch (error) {
-        console.error('Error fetching emails for contact:', error.response ? error.response.data : error.message);
+        console.error('Error fetching emails for lead:', error.response ? error.response.data : error.message);
         return [];
     }
 }
 
-// Function to fetch the content of an email from Zoho
-async function getEmailContent(moduleApiName, contactId, messageId, accessToken) {
+// Función para obtener el contenido de un correo específico desde Zoho
+async function getEmailContent(moduleApiName, leadId, messageId, accessToken) {
     try {
-        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${contactId}/Emails/${messageId}`;
+        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${leadId}/Emails/${messageId}`;
         const response = await axios.get(url, {
             headers: {
-                Authorization: `Zoho-oauthtoken ${accessToken}`
-            }
+                Authorization: `Zoho-oauthtoken ${accessToken}`,
+            },
         });
 
-        if (response.data && response.data.email_related_list && response.data.email_related_list.length > 0) {
-            return response.data.email_related_list[0].content || 'No content available';
-        } else {
-            console.log('No email content found or no data available:', response.data);
-            return 'No content available';
+        if (
+            response.data &&
+            response.data.email_related_list &&
+            response.data.email_related_list.length > 0
+        ) {
+            const emailContent = response.data.email_related_list[0].content || 'No content available';
+            return emailContent;
         }
+        console.log('No email content found or no data available:', response.data);
+        return 'No content available';
     } catch (error) {
         console.error('Error fetching email content:', error.response ? error.response.data : error.message);
         return 'No content available';
     }
 }
 
-// Function to clean email content
+
+// Función para limpiar el contenido del correo electrónico
 function cleanEmailContent(content) {
     let cleanedContent = htmlToText(content, {
         wordwrap: 130,
-        preserveNewlines: true
+        preserveNewlines: true,
     });
 
-    CONFIDENTIALITY_NOTICE.forEach(regex => {
+    CONFIDENTIALITY_NOTICE.forEach((regex) => {
         cleanedContent = cleanedContent.replace(regex, '');
     });
 
-    // Reemplazar múltiples saltos de línea en la firma por un solo salto de línea
-    cleanedContent = cleanedContent.replace(/(Mobile:.*?)(\n\s*?)(Email:.*?)(\n\s*?)(www\.immucura\.com.*?)(\n\s*?)(Immucura Limited.*?)(\n\s*?)(20 Harcourt Street,.*?)(\n\s*?)(Dublin 2, D02 H364)(\n\s*?)(T:.*?)(\n\s*?)(www\.immucura\.com)/g,
-        '$1\n$3\n$5\n$7\n$9\n$11\n$13');
-
-    // Eliminar saltos de línea múltiples en todo el contenido
-    cleanedContent = cleanedContent.replace(/(\n\s*){3,}/g, '\n\n');
-
-    return cleanedContent.trim();
+    // Remove multiple line breaks throughout the content
+    return cleanedContent.replace(/(\n\s*){3,}/g, '\n\n').trim();
 }
 
-// Function to create PDF files from emails
-function createPDF(contactName, emailContents, outputDir) {
+// Función para crear archivos PDF a partir de correos electrónicos
+function createPDF(leadName, emailContents, leadEmail) {
     const doc = new PDFDocument();
-    const outputFilePath = path.join(outputDir, `emails-${contactName}.pdf`);
+    const baseDir = path.join(__dirname, 'emails-downloads');
+    const leadDir = path.join(baseDir, leadEmail);
+    const outputFilePath = path.join(leadDir, `emails-${leadName}.pdf`);
+
+    if (!fs.existsSync(baseDir)) {
+        fs.mkdirSync(baseDir);
+    }
+    if (!fs.existsSync(leadDir)) {
+        fs.mkdirSync(leadDir);
+    }
 
     doc.pipe(fs.createWriteStream(outputFilePath));
 
     emailContents.forEach((content, index) => {
         if (index > 0) {
-            doc.text('\n\n\n'); // Dejar tres espacios antes del siguiente correo
+            doc.text('\n\n\n'); // Leave three spaces before the next email
         }
-        const sentTimeFormatted = moment(content.sentTime).format('MMMM Do YYYY, h:mm:ss a'); // Use the sentTime from the email
-        doc.fontSize(12).text(`MAIL ${index + 1}:\nSent: ${sentTimeFormatted}\nSubject: ${content.subject}\nFrom: ${content.from}\nTo: ${content.to}\n\nContent:\n${content.content}\n\n`, {
-            align: 'left',
-            lineGap: 2
-        });
+        const sentTimeFormatted = moment(content.sentTime).format('MMMM Do YYYY, h:mm:ss a');
+        const from = content.from.includes('<')
+            ? content.from.split('<')[0].trim() // Extract name only if email address is included
+            : content.from; // Use as is if no email address
+
+        doc
+            .fontSize(12)
+            .text(
+                `MAIL ${index + 1}:\nSent: ${sentTimeFormatted}\nSubject: ${content.subject}\nFrom: ${from}\nTo: ${content.to}\n\nContent:\n${content.content}\n\n`,
+                {
+                    align: 'left',
+                    lineGap: 2,
+                }
+            );
     });
 
     doc.end();
-    console.log(`PDF created for contact: ${contactName}`);
+    console.log(`PDF created for lead: ${leadName}`);
 }
 
-// Function to find an item by email in Monday.com
+// Función para encontrar un item por correo electrónico en Monday.com
 async function findItemByEmail(boardIds, email) {
     if (!email) {
         throw new Error("Email is undefined");
@@ -245,7 +260,7 @@ async function findItemByEmail(boardIds, email) {
         let allItems = [];
         let cursor = null;
         let moreItems = true;
-        const emailColumnId = emailColumnMap[boardId]; // Get the correct email column ID
+        const emailColumnId = emailColumnMap[boardId];
 
         while (moreItems) {
             const query = JSON.stringify({
@@ -280,7 +295,7 @@ async function findItemByEmail(boardIds, email) {
                 if (response.data.errors) {
                     console.error('GraphQL Response Errors:', response.data.errors);
                     moreItems = false;
-                    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds before retrying
+                    await new Promise(resolve => setTimeout(resolve, 10000));
                     continue;
                 }
                 const data = response.data.data.items_page_by_column_values;
@@ -309,7 +324,7 @@ async function findItemByEmail(boardIds, email) {
     return items.flat();
 }
 
-// Function to upload and add a file to an item in Monday.com
+// Función para subir y añadir un archivo a un item en Monday.com
 async function uploadAndAddFileToItem(itemId, filePath, columnId) {
     const mutation = `
         mutation($file: File!) {
@@ -336,7 +351,7 @@ async function uploadAndAddFileToItem(itemId, filePath, columnId) {
     }
 }
 
-// Function to process the file upload to Monday.com
+// Función para procesar la carga del archivo en Monday.com
 async function processFileUpload(email, filePath) {
     const boardIds = Object.keys(boardColumnMap).map(Number);
     const items = await findItemByEmail(boardIds, email);
@@ -347,7 +362,6 @@ async function processFileUpload(email, filePath) {
             const columnId = boardColumnMap[item.boardId];
             if (columnId) {
                 const fileName = path.basename(filePath);
-                // Verificar si el archivo ya fue subido para este tablero y ítem
                 if (!uploadedFiles[item.boardId]) {
                     uploadedFiles[item.boardId] = {};
                 }
@@ -360,7 +374,7 @@ async function processFileUpload(email, filePath) {
                     console.log(`Uploading file to item ${item.id} on board ${item.boardId}`);
                     await uploadAndAddFileToItem(item.id, filePath, columnId);
                     uploadedFiles[item.boardId][email].push(fileName);
-                    saveUploadedFiles(); // Guardar los archivos subidos después de cada subida
+                    saveUploadedFiles();
                     console.log(`File uploaded to item ${item.id} on board ${item.boardId}`);
                 }
             } else {
@@ -372,41 +386,41 @@ async function processFileUpload(email, filePath) {
     }
 }
 
-// Main function
+// Función principal
 async function main() {
     let accessToken = await getAccessToken();
     if (!accessToken) {
-        console.log("Failed to obtain an access token.");
+        console.log('Failed to obtain an access token.');
         process.exit(1);
     }
 
-    const contacts = await getAllContacts(accessToken);
-    console.log(`Processing ${contacts.length} contacts...`);
+    const leads = await getAllLeads(accessToken);
+    console.log(`Processing ${leads.length} leads...`);
 
-    for (const contact of contacts) {
-        const fullName = contact.Full_Name || 'Unknown Name';
-        const contactEmail = contact.Email || 'no-email';
-        console.log(`\nProcessing contact: ${fullName} (${contactEmail})`);
+    for (const lead of leads) {
+        const fullName = lead.Full_Name || 'Unknown Name';
+        const leadEmail = lead.Email || 'no-email';
+        console.log(`\nProcessing lead: ${fullName} (${leadEmail})`);
 
-        let emails = await getEmailsOfContact('Contacts', contact.id, accessToken);
+        let emails = await getEmailsOfLead('Leads', lead.id, accessToken);
 
         // Retry fetching emails if the token has expired
         if (emails.length === 0) {
             console.log('Retrying email fetch with refreshed token...');
             accessToken = await getAccessToken();
-            emails = await getEmailsOfContact('Contacts', contact.id, accessToken);
+            emails = await getEmailsOfLead('Leads', lead.id, accessToken);
         }
 
         if (emails.length > 0) {
             const emailContents = [];
             for (const [index, email] of emails.entries()) {
-                console.log(`\nProcessing email ${index + 1} for ${contactEmail}:`);
+                console.log(`\nProcessing email ${index + 1} for ${leadEmail}:`);
                 console.log(`Subject: ${email.subject}`);
                 console.log(`From: ${email.from}`);
                 console.log(`To: ${email.to}`);
                 console.log(`Sent: ${email.sentTime}`);
 
-                const emailContent = await getEmailContent('Contacts', contact.id, email.messageId, accessToken);
+                const emailContent = await getEmailContent('Leads', lead.id, email.messageId, accessToken);
                 const cleanedContent = cleanEmailContent(emailContent);
 
                 emailContents.push({
@@ -414,29 +428,19 @@ async function main() {
                     from: email.from,
                     to: email.to,
                     content: cleanedContent,
-                    sentTime: email.sentTime // Ensure the sentTime is used correctly
+                    sentTime: email.sentTime,
                 });
 
                 console.log(`Content of email ${index + 1}:\n${cleanedContent}\n`);
             }
 
-            const baseDir = path.join(__dirname, 'mails-downloads');
-            const contactDir = path.join(baseDir, contactEmail);
-            if (!fs.existsSync(baseDir)) {
-                fs.mkdirSync(baseDir);
-            }
-            if (!fs.existsSync(contactDir)) {
-                fs.mkdirSync(contactDir);
-            }
-
-            const pdfPath = path.join(contactDir, `emails-${fullName}.pdf`);
-            createPDF(fullName, emailContents, contactDir);
-            await processFileUpload(contactEmail, pdfPath);
+            createPDF(fullName, emailContents, leadEmail);
+            await processFileUpload(leadEmail, path.join(__dirname, 'emails-downloads', leadEmail, `emails-${fullName}.pdf`));
         } else {
-            console.log(`No emails to display for contact: ${contactEmail}`);
+            console.log(`No emails to display for lead: ${leadEmail}`);
         }
     }
-    console.log("TRABAJO TERMINADO");
+    console.log('TRABAJO TERMINADO');
     process.exit(0);
 }
 
