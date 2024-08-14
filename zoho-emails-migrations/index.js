@@ -24,6 +24,7 @@ const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
 
 const CONFIDENTIALITY_NOTICE = [
     /CONFIDENTIALITY NOTICE:([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
+    /AVIS DE CONFIDENTIALITÉ :([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
     /IMMUCURA LIMITED([\s\S]*?)(?=(\n\n|\s*$))/g,
     /\[crm\\img_id:[^\]]*\]/g,
     /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g,
@@ -40,7 +41,6 @@ const CONFIDENTIALITY_NOTICE = [
     /Website: ([\s\S]*?)(?=(\n\n|\s*$))/gi,
     /Email: ([\s\S]*?)(?=(\n\n|\s*$))/gi,
 ];
-
 
 // Mapeo de columnas para Monday.com
 const boardColumnMap = {
@@ -74,43 +74,83 @@ function saveUploadedFiles() {
     fs.writeFileSync(uploadedFilesPath, JSON.stringify(uploadedFiles, null, 2));
 }
 
-// Función para obtener el token de acceso desde Zoho
-async function getAccessToken() {
-    try {
-        const response = await axios.post(`https://accounts.zoho.eu/oauth/v2/token`, null, {
-            params: {
-                client_id: CLIENT_ID,
-                client_secret: CLIENT_SECRET,
-                grant_type: 'refresh_token',
-                refresh_token: REFRESH_TOKEN
-            }
-        });
-        if (response.data && response.data.access_token) {
-            console.log('Access token obtained successfully.');
-            return response.data.access_token;
-        } else {
-            console.error('Unexpected response:', response.data);
-            return null;
-        }
-    } catch (error) {
-        if (error.response) {
-            console.error('Error response data:', error.response.data);
-        } else {
-            console.error('Error obtaining access token:', error.message);
-        }
-        return null;
-    }
+const tokenFilePath = path.join(__dirname, 'access-token.json');
+
+// Función para guardar el token en un archivo
+function saveAccessToken(token) {
+    fs.writeFileSync(tokenFilePath, JSON.stringify({ accessToken: token, timestamp: Date.now() }));
 }
 
-// Función para obtener todos los leads desde Zoho con paginación usando page_token
+// Función para cargar el token de acceso desde el archivo
+function loadAccessToken() {
+    if (fs.existsSync(tokenFilePath)) {
+        const data = fs.readFileSync(tokenFilePath, 'utf8');
+        return JSON.parse(data);
+    }
+    return null;
+}
+
+let accessToken = null;
+let tokenExpirationTime = 0;
+
+async function getAccessToken(forceRenew = false) {
+    const savedTokenData = loadAccessToken();
+
+    if (forceRenew || !savedTokenData || Date.now() >= tokenExpirationTime) {
+        try {
+            const response = await axios.post(`https://accounts.zoho.eu/oauth/v2/token`, null, {
+                params: {
+                    client_id: CLIENT_ID,
+                    client_secret: CLIENT_SECRET,
+                    grant_type: 'refresh_token',
+                    refresh_token: REFRESH_TOKEN
+                }
+            });
+            if (response.data && response.data.access_token) {
+                console.log('Access token obtained successfully.');
+                saveAccessToken(response.data.access_token);
+                accessToken = response.data.access_token;
+                tokenExpirationTime = Date.now() + (response.data.expires_in - 60) * 1000;
+                return response.data.access_token;
+            } else {
+                console.error('Unexpected response:', response.data);
+                return null;
+            }
+        } catch (error) {
+            console.error('Error obtaining access token:', error.response ? error.response.data : error.message);
+            return null;
+        }
+    }
+
+    console.log('Using saved access token.');
+    accessToken = savedTokenData.accessToken;
+    tokenExpirationTime = savedTokenData.timestamp + 3600000 - 60000;
+    return savedTokenData.accessToken;
+}
+
+// El resto de tu código sigue igual, no olvides ahora que tienes las variables globales definidas, puedes utilizarlas en getAllLeads
+
+
+// Modificación en la función getAllLeads para manejar errores de token inválido
 async function getAllLeads(accessToken) {
     let allLeads = [];
+    let progress = loadProgress();  // Cargar progreso si existe
     let pageToken = null;
     let morePages = true;
+    let startFromNextLead = progress ? false : true;
+    const maxLeads = 60000; // Establecer el objetivo de leads que deseas recuperar
+    let leadsFetched = 0;
 
     console.log('Fetching all leads from Zoho CRM...');
 
-    while (morePages) {
+    const seenLeads = new Set(); // Para seguimiento de leads ya procesados
+
+    while (morePages && allLeads.length < maxLeads) {
+        if (Date.now() >= tokenExpirationTime) { // Renueva si el token ha expirado
+            console.log('Token expired, renewing...');
+            accessToken = await getAccessToken(true);
+        }
+
         try {
             const response = await axios.get(`${API_DOMAIN}/crm/v3/Leads`, {
                 headers: {
@@ -123,27 +163,63 @@ async function getAllLeads(accessToken) {
                 }
             });
 
-            const leads = response.data.data;
+            const leads = response.data.data || [];
+            const nextPageToken = response.data.info ? response.data.info.next_page_token : null;
+
             if (leads.length > 0) {
-                allLeads = allLeads.concat(leads);
+                if (progress && !startFromNextLead) {
+                    const lastProcessedIndex = leads.findIndex(lead => lead.Email === progress.lastLeadEmail && lead.id === progress.lastLeadId);
+                    if (lastProcessedIndex !== -1) {
+                        leads.splice(0, lastProcessedIndex + 1); // Eliminar los leads ya procesados
+                        startFromNextLead = true;
+                    }
+                }
+
+                for (let lead of leads) {
+                    if (!seenLeads.has(lead.id)) {
+                        seenLeads.add(lead.id);
+                        allLeads.push(lead);
+                        leadsFetched += 1;
+
+                        if (leadsFetched % 1000 === 0) {
+                            saveProgress(lead.Email, lead.id);
+                        }
+                    }
+                }
+
                 console.log(`Fetched ${leads.length} leads, total fetched: ${allLeads.length}`);
-                pageToken = response.data.info.next_token; // Obtener el siguiente token de página
-                morePages = pageToken !== undefined; // Continuar si hay un next_token
+                pageToken = nextPageToken;
+                morePages = pageToken !== null;
+
+                if (allLeads.length >= maxLeads) {
+                    morePages = false;
+                    console.log(`Reached target of ${maxLeads} leads. Stopping fetch.`);
+                }
             } else {
                 morePages = false;
                 console.log('No more leads to fetch.');
             }
         } catch (error) {
-            console.error('Error fetching leads:', error.response ? error.response.data : error.message);
-            morePages = false;
+            if (error.response && error.response.data && error.response.data.code === 'INVALID_TOKEN') {
+                console.log('Invalid token detected, renewing access token...');
+                accessToken = await getAccessToken(true);
+                continue; // Reintentar la solicitud con el nuevo token
+            } else {
+                console.error('Error fetching leads:', error.response ? error.response.data : error.message);
+                morePages = false;
+            }
         }
     }
 
-    console.log(`Total leads fetched: ${allLeads.length}`);
+    console.log(`Total unique leads fetched: ${allLeads.length}`);
     return allLeads;
 }
 
-// Función para obtener correos electrónicos de un lead específico desde Zoho
+
+
+
+
+
 // Función para obtener correos electrónicos de un lead específico desde Zoho
 async function getEmailsOfLead(moduleApiName, leadId, accessToken) {
     try {
@@ -174,6 +250,27 @@ async function getEmailsOfLead(moduleApiName, leadId, accessToken) {
     }
 }
 
+// Función para guardar el progreso
+function saveProgress(lastLeadEmail, lastLeadId) {
+    const progress = {
+        lastLeadEmail: lastLeadEmail,
+        lastLeadId: lastLeadId
+    };
+    fs.writeFileSync('progress.json', JSON.stringify(progress, null, 2));
+}
+
+// Función para cargar el progreso
+function loadProgress() {
+    if (fs.existsSync('progress.json')) {
+        const data = fs.readFileSync('progress.json', 'utf8');
+        if (data.trim()) {  // Verifica que el archivo no esté vacío
+            return JSON.parse(data);
+        } else {
+            console.log('progress.json está vacío. No se puede cargar el progreso.');
+        }
+    }
+    return null;
+}
 
 // Función para obtener el contenido de un correo específico desde Zoho
 async function getEmailContent(moduleApiName, leadId, messageId, accessToken) {
@@ -201,8 +298,6 @@ async function getEmailContent(moduleApiName, leadId, messageId, accessToken) {
     }
 }
 
-
-// Function to clean email content
 function cleanEmailContent(content) {
     let cleanedContent = htmlToText(content, {
         wordwrap: 130,
@@ -213,25 +308,42 @@ function cleanEmailContent(content) {
         cleanedContent = cleanedContent.replace(regex, '');
     });
 
-    // Generalizar la limpieza de la firma
-    cleanedContent = cleanedContent.replace(/(Mobile|Mob|Phone|T):.*?(\n|$)/gi, '$1: [number removed]\n');
-    cleanedContent = cleanedContent.replace(/Email:.*?(\n|$)/gi, 'Email: [email removed]\n');
-    cleanedContent = cleanedContent.replace(/www\..*?(\n|$)/gi, 'Website: [URL removed]\n');
+    // Eliminar enlaces de Twitter
+    cleanedContent = cleanedContent.replace(/https?:\/\/(www\.)?twitter\.com\/[^\s]+/gi, '');
+
+    // Unir líneas relacionadas en la firma (como Immucura Limited y dirección)
+    cleanedContent = cleanedContent.replace(/(\n\s*)(Limited|Street,|Dublin|Mob:)/g, ' $2');
+
+    // Corregir y mantener Mob y Email en la misma línea
+    cleanedContent = cleanedContent.replace(/(Mob|Mobile|Phone|T):\s*(.*?)(\n|$)/gi, 'Mob: $2\n');
+    cleanedContent = cleanedContent.replace(/Email:\s*(.*?)(\n|$)/gi, 'Email: $1\n');
+
+    // Eliminar URLs no deseadas
+    cleanedContent = cleanedContent.replace(/www\..*?(\n|$)/gi, '');
+
+    // Agregar un salto de línea antes de la firma si no lo hay
+    cleanedContent = cleanedContent.replace(/(Content:\n[^\n]+)(\n\n)?(\n(Mob|Mobile|Phone|Email))/g, '$1\n\n$3');
 
     // Eliminar saltos de línea múltiples en todo el contenido
-    cleanedContent = cleanedContent.replace(/(\n\s*){2,}/g, '\n\n');
+    cleanedContent = cleanedContent.replace(/(\n\s*){2,}/g, '\n');
 
     return cleanedContent.trim();
 }
 
-
+function sanitizeFileName(fileName) {
+    return fileName
+        .replace(/[^a-z0-9]/gi, '_')  // Reemplaza caracteres no alfanuméricos por guiones bajos
+        .replace(/_+/g, '_')           // Reemplaza múltiples guiones bajos por uno solo
+        .replace(/^_+|_+$/g, '');      // Elimina los guiones bajos al inicio o al final del nombre
+}
 
 // Función para crear archivos PDF a partir de correos electrónicos
 function createPDF(leadName, emailContents, leadEmail) {
+    const sanitizedLeadName = sanitizeFileName(leadName || 'Unknown');
     const doc = new PDFDocument();
     const baseDir = path.join(__dirname, 'emails-downloads');
     const leadDir = path.join(baseDir, leadEmail);
-    const outputFilePath = path.join(leadDir, `emails-${leadName}.pdf`);
+    const outputFilePath = path.join(leadDir, `emails-${sanitizedLeadName}.pdf`);
 
     if (!fs.existsSync(baseDir)) {
         fs.mkdirSync(baseDir);
@@ -260,9 +372,8 @@ function createPDF(leadName, emailContents, leadEmail) {
     });
 
     doc.end();
-    console.log(`PDF created for lead: ${leadName}`);
+    console.log(`PDF created for lead: ${sanitizedLeadName}`);
 }
-
 
 // Función para encontrar un item por correo electrónico en Monday.com
 async function findItemByEmail(boardIds, email) {
@@ -401,61 +512,96 @@ async function processFileUpload(email, filePath) {
 }
 
 // Función principal
+// Función principal
+// Función principal
 async function main() {
     let accessToken = await getAccessToken();
     if (!accessToken) {
         console.log('Failed to obtain an access token.');
-        process.exit(1);
+        return; // Evitar que el script se detenga abruptamente
     }
+
+    // Cargar el progreso si existe
+    let progress = loadProgress();
+    let startProcessing = !progress; // Si no hay progreso, empieza desde el principio
 
     const leads = await getAllLeads(accessToken);
     console.log(`Processing ${leads.length} leads...`);
 
-    for (const lead of leads) {
+    if (!leads.length) {
+        console.log("No leads were fetched, exiting.");
+        return;
+    }
+
+    console.log("Starting lead processing...");
+    console.log(`Starting lead processing from ${progress ? `lead ${progress.lastLeadId}` : 'the beginning'}`);
+
+
+    for (const [index, lead] of leads.entries()) {
         const fullName = lead.Full_Name || 'Unknown Name';
         const leadEmail = lead.Email || 'no-email';
-        console.log(`\nProcessing lead: ${fullName} (${leadEmail})`);
 
-        let emails = await getEmailsOfLead('Leads', lead.id, accessToken);
-
-        // Retry fetching emails if the token has expired
-        if (emails.length === 0) {
-            console.log('Retrying email fetch with refreshed token...');
-            accessToken = await getAccessToken();
-            emails = await getEmailsOfLead('Leads', lead.id, accessToken);
+        // Saltar leads hasta llegar al último procesado
+        if (progress && !startProcessing) {
+            if (leadEmail === progress.lastLeadEmail && lead.id === progress.lastLeadId) {
+                startProcessing = true;  // Comienza a procesar a partir de este lead
+            } else {
+                continue;  // Saltar los leads ya procesados
+            }
         }
 
-        if (emails.length > 0) {
-            const emailContents = [];
-            for (const [index, email] of emails.entries()) {
-                console.log(`\nProcessing email ${index + 1} for ${leadEmail}:`);
-                console.log(`Subject: ${email.subject}`);
-                console.log(`From: ${email.from}`);
-                console.log(`To: ${email.to}`);
-                console.log(`Sent: ${email.sentTime}`);
+        try {
+            console.log(`\nProcessing lead ${index + 1}/${leads.length}: ${fullName} (${leadEmail})`);
 
-                const emailContent = await getEmailContent('Leads', lead.id, email.messageId, accessToken);
-                const cleanedContent = cleanEmailContent(emailContent);
-
-                emailContents.push({
-                    subject: email.subject,
-                    from: email.from,
-                    to: email.to,
-                    content: cleanedContent,
-                    sentTime: email.sentTime,
-                });
-
-                console.log(`Content of email ${index + 1}:\n${cleanedContent}\n`);
+            if (leadEmail === 'no-email') {
+                console.log(`Skipping lead ${fullName} as it has no email.`);
+                continue;
             }
 
-            createPDF(fullName, emailContents, leadEmail);
-            await processFileUpload(leadEmail, path.join(__dirname, 'emails-downloads', leadEmail, `emails-${fullName}.pdf`));
-        } else {
-            console.log(`No emails to display for lead: ${leadEmail}`);
+            if (Date.now() >= tokenExpirationTime) { // Verificar si el token ha expirado antes de cada operación
+                console.log('Token expired, renewing...');
+                accessToken = await getAccessToken(true);
+            }
+
+            let emails = await getEmailsOfLead('Leads', lead.id, accessToken);
+
+            if (emails.length > 0) {
+                const emailContents = [];
+                for (const [emailIndex, email] of emails.entries()) {
+                    console.log(`\nProcessing email ${emailIndex + 1}/${emails.length} for ${leadEmail}:`);
+                    console.log(`Subject: ${email.subject}`);
+                    console.log(`From: ${email.from}`);
+                    console.log(`To: ${email.to}`);
+                    console.log(`Sent: ${email.sentTime}`);
+
+                    const emailContent = await getEmailContent('Leads', lead.id, email.messageId, accessToken);
+                    const cleanedContent = cleanEmailContent(emailContent);
+
+                    emailContents.push({
+                        subject: email.subject,
+                        from: email.from,
+                        to: email.to,
+                        content: cleanedContent,
+                        sentTime: email.sentTime,
+                    });
+
+                    console.log(`Content of email ${emailIndex + 1}:\n${cleanedContent}\n`);
+                }
+
+                createPDF(fullName, emailContents, leadEmail);
+                await processFileUpload(leadEmail, path.join(__dirname, 'emails-downloads', leadEmail, `emails-${sanitizeFileName(fullName)}.pdf`));
+            } else {
+                console.log(`No emails to display for lead: ${leadEmail}`);
+            }
+
+        } catch (error) {
+            console.error(`Error processing lead ${fullName}:`, error.message);
         }
+
+        saveProgress(leadEmail, lead.id); // Guardar progreso después de procesar cada lead
     }
+
     console.log('TRABAJO TERMINADO');
-    process.exit(0);
 }
 
 main();
