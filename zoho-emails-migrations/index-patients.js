@@ -26,21 +26,33 @@ const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
 // Expresiones regulares para eliminar bloques de texto específicos
 const CONFIDENTIALITY_NOTICE = [
     /CONFIDENTIALITY NOTICE:([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
+    /AVIS DE CONFIDENTIALITÉ :([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
     /IMMUCURA LIMITED([\s\S]*?)(?=(\n\n|\s*$))/g,
     /\[crm\\img_id:[^\]]*\]/g,
-    /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g, // Eliminar bloques de "AVISO LEGAL"
-    /confidencial sometida a secreto profesional([\s\S]*?)(?=expresa de Immucura Med S.L.|$)/gi, // Eliminar "confidencial sometida a secreto profesional" hasta "expresa de Immucura Med S.L."
-    /expresa de Immucura Med S.L.([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/gi, // Eliminar "expresa de Immucura Med S.L." hasta "PROTECCIÓN DE DATOS"
-    /LEGAL WARNING:([\s\S]*?)(?=This message and its attachments|$)/g, // Eliminar bloques de "LEGAL WARNING"
-    /PROTECCIÓN DE DATOS([\s\S]*?)(?=(\n\n|\s*$))/gi // Eliminar "PROTECCIÓN DE DATOS" hasta final del texto o doble línea
+    /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g,
+    /confidencial sometida a secreto profesional([\s\S]*?)(?=expresa de Immucura Med S.L.|$)/gi,
+    /expresa de Immucura Med S.L.([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/gi,
+    /LEGAL WARNING:([\s\S]*?)(?=This message and its attachments|$)/g,
+    /PROTECCIÓN DE DATOS([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Br3athe hereby informs you that([\s\S]*?)(?=Confidentiality:|$)/gi,
+    /Confidentiality:([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /In compliance with the European Union General Data Protection Regulation \(GDPR\), you receive this message([\s\S]*?)(?=Headquarter:|$)/gi,
+    /Headquarter:([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /This message and its attachments are addressed exclusively([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Before printing this message([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Website: ([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Email: ([\s\S]*?)(?=(\n\n|\s*$))/gi,
+    /Bureau administratif Immucura Med SL:([\s\S]*?)(?=\n\n|$)/g, // Expresión regular para el párrafo
+    /https:\/\/(www\.)?(instagram\.com|youtube\.com|facebook\.com|tiktok\.com)\/[^\s]+/g // Expresión regular para URLs de redes sociales
 ];
+
 
 // Board and column mapping for Monday.com
 const boardColumnMap = {
-    1524952207: 'archivo3__1', // Column ID for board 1524952207
-    1556223297: 'archivo51__1', // Column ID for board 1556223297
-    1565753842: 'archivo3__1',  // Column ID for board 1565753842
-    1504994976: 'archivo2__1'   // Column ID for board 1504994976
+    1524952207: 'archivo5__1', // Column ID for board 1524952207 // patient medical info Limited
+    1556223297: 'archivo9__1', // Column ID for board 1556223297 // patient medical info germany
+    1565753842: 'archivo30__1',  // Column ID for board 1565753842 //patients Germany
+    1504994976: 'archivo5__1'   // Column ID for board 1504994976 // patient medical Limited
 };
 
 // Column mapping for email fields in Monday.com
@@ -158,8 +170,9 @@ async function getEmailsOfPatient(moduleApiName, patientId, accessToken) {
                 to: email.to.map(to => to.email).join(', '),
                 messageId: email.message_id,
                 content: email.content || 'No content available',
-                sentTime: email.sent_time || 'No date available'
+                sentTime: email.time || 'No date available' // Aquí asegúrate de capturar el campo 'time'
             }));
+
         } else {
             console.log('No emails found or no data available:', response.data);
             return [];
@@ -214,9 +227,9 @@ function cleanEmailContent(content) {
 }
 
 // Function to create PDF files from emails
-function createPDF(patientName, emailContents, outputDir) {
+function createPDF(contactName, emailContents, outputDir) {
     const doc = new PDFDocument();
-    const outputFilePath = path.join(outputDir, `emails-${patientName}.pdf`);
+    const outputFilePath = path.join(outputDir, `emails-${contactName}.pdf`);
 
     doc.pipe(fs.createWriteStream(outputFilePath));
 
@@ -224,7 +237,8 @@ function createPDF(patientName, emailContents, outputDir) {
         if (index > 0) {
             doc.text('\n\n\n'); // Dejar tres espacios antes del siguiente correo
         }
-        const sentTimeFormatted = moment(content.sent_time).format('MMMM Do YYYY, h:mm:ss a');
+        // Usa el 'sentTime' del email para formatear la fecha
+        const sentTimeFormatted = moment(content.sentTime).format('MMMM Do YYYY, h:mm:ss a');
         doc.fontSize(12).text(`MAIL ${index + 1}:\nSent: ${sentTimeFormatted}\nSubject: ${content.subject}\nFrom: ${content.from}\nTo: ${content.to}\n\nContent:\n${content.content}\n\n`, {
             align: 'left',
             lineGap: 2
@@ -232,7 +246,7 @@ function createPDF(patientName, emailContents, outputDir) {
     });
 
     doc.end();
-    console.log(`PDF created for patient: ${patientName}`);
+    console.log(`PDF created for contact: ${contactName}`);
 }
 
 // Function to find an item by email in Monday.com
@@ -378,20 +392,21 @@ async function main() {
     if (accessToken) {
         const patients = await getAllPatients(accessToken);
         console.log(`Processing ${patients.length} patients...`);
-        for (const patient of patients) {
+
+        for (const [index, patient] of patients.entries()) {
             const fullName = patient.Name || 'Unknown Name';
             const patientEmail = patient.Email || 'no-email';
-            console.log(`\nProcessing patient: ${fullName} (${patientEmail})`);
+            console.log(`\nProcessing patient ${index + 1}/${patients.length}: ${fullName} (${patientEmail})`);
 
             const emails = await getEmailsOfPatient('PatientsNew', patient.id, accessToken);
             if (emails.length > 0) {
                 const emailContents = [];
-                for (const [index, email] of emails.entries()) {
-                    console.log(`\nProcessing email ${index + 1} for ${patientEmail}:`);
+                for (const [emailIndex, email] of emails.entries()) {
+                    console.log(`\nProcessing email ${emailIndex + 1} for ${patientEmail}:`);
                     console.log(`Subject: ${email.subject}`);
                     console.log(`From: ${email.from}`);
                     console.log(`To: ${email.to}`);
-                    console.log(`Sent: ${email.sent_time}`);
+                    console.log(`Sent: ${email.sentTime}`);
 
                     const emailContent = await getEmailContent('PatientsNew', patient.id, email.messageId, accessToken);
                     const cleanedContent = cleanEmailContent(emailContent);
@@ -401,13 +416,13 @@ async function main() {
                         from: email.from,
                         to: email.to,
                         content: cleanedContent,
-                        sentTime: email.sent_time
+                        sentTime: email.sentTime
                     });
 
-                    console.log(`Content of email ${index + 1}:\n${cleanedContent}\n`);
+                    console.log(`Content of email ${emailIndex + 1}:\n${cleanedContent}\n`);
                 }
 
-                const baseDir = path.join(__dirname, 'mails-downloads');
+                const baseDir = path.join(__dirname, 'emails-downloads');
                 const patientDir = path.join(baseDir, patientEmail);
                 if (!fs.existsSync(baseDir)) {
                     fs.mkdirSync(baseDir);
