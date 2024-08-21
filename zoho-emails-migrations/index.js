@@ -3,253 +3,196 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { htmlToText } from 'html-to-text';
-import PDFDocument from 'pdfkit';
-import moment from 'moment';
-import FormData from 'form-data';
 
 dotenv.config();
 
-// Define __dirname for ES modules
+// Define __dirname para ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Environment variables for Zoho CRM and Monday.com
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
 const API_DOMAIN = process.env.API_DOMAIN || 'https://www.zohoapis.eu';
-const API_KEY = process.env.API_KEY;
 const API_URL = process.env.API_URL;
-const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file';
+const API_KEY = process.env.API_KEY;
 
-// Expresiones regulares para eliminar bloques de texto específicos
-const CONFIDENTIALITY_NOTICE = [
-    /CONFIDENTIALITY NOTICE:([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
-    /AVIS DE CONFIDENTIALITÉ :([\s\S]*?)(?=IMMUCURA LIMITED|$)/g,
-    /IMMUCURA LIMITED([\s\S]*?)(?=(\n\n|\s*$))/g,
-    /\[crm\\img_id:[^\]]*\]/g,
-    /AVISO LEGAL:([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/g,
-    /confidencial sometida a secreto profesional([\s\S]*?)(?=expresa de Immucura Med S.L.|$)/gi,
-    /expresa de Immucura Med S.L.([\s\S]*?)(?=PROTECCIÓN DE DATOS|$)/gi,
-    /LEGAL WARNING:([\s\S]*?)(?=This message and its attachments|$)/g,
-    /PROTECCIÓN DE DATOS([\s\S]*?)(?=(\n\n|\s*$))/gi,
-    /Br3athe hereby informs you that([\s\S]*?)(?=Confidentiality:|$)/gi,
-    /Confidentiality:([\s\S]*?)(?=(\n\n|\s*$))/gi,
-    /In compliance with the European Union General Data Protection Regulation \(GDPR\), you receive this message([\s\S]*?)(?=Headquarter:|$)/gi,
-    /Headquarter:([\s\S]*?)(?=(\n\n|\s*$))/gi,
-    /This message and its attachments are addressed exclusively([\s\S]*?)(?=(\n\n|\s*$))/gi,
-    /Before printing this message([\s\S]*?)(?=(\n\n|\s*$))/gi,
-    /Website: ([\s\S]*?)(?=(\n\n|\s*$))/gi,
-    /Email: ([\s\S]*?)(?=(\n\n|\s*$))/gi,
-    /Bureau administratif Immucura Med SL:([\s\S]*?)(?=\n\n|$)/g, // Expresión regular para el párrafo
-    /https:\/\/(www\.)?(instagram\.com|youtube\.com|facebook\.com|tiktok\.com)\/[^\s]+/g // Expresión regular para URLs de redes sociales
-];
-
-
-// Board and column mapping for Monday.com
-const boardColumnMap = {
-    1524952207: 'archivo5__1', // Column ID for board 1524952207 // patient medical info Limited
-    1556223297: 'archivo9__1', // Column ID for board 1556223297 // patient medical info germany
-    1565753842: 'archivo30__1',  // Column ID for board 1565753842 //patients Germany
-    1504994976: 'archivo5__1'   // Column ID for board 1504994976 // patient medical Limited
-};
-
-// Column mapping for email fields in Monday.com
+// Mapea las columnas de Monday.com
 const emailColumnMap = {
-    1524952207: 'e_mail9__1',
-    1556223297: 'e_mail9__1',
-    1565753842: 'contact_email', // Column ID for emails in board 1565753842
-    1504994976: 'contact_email'  // Column ID for emails in board 1504994976
+    1499741852: 'lead_email', // Board 1499741852, columna de email
+    1565676276: 'lead_email', // Board 1565676276, columna de email
 };
 
-// Ruta y carga de archivos subidos previamente
-const uploadedFilesPath = path.join(__dirname, 'uploaded-files.json');
-let uploadedFiles = {};
+const ownerColumnMap = {
+    1499741852: 'personas7__1', // Reemplaza con el ID de la columna "people" en el Board 1499741852
+    1565676276: 'personas__1', // Reemplaza con el ID de la columna "people" en el Board 1565676276
+};
 
-// Cargar los archivos ya subidos desde uploaded-files.json
-if (fs.existsSync(uploadedFilesPath)) {
-    try {
-        const fileData = fs.readFileSync(uploadedFilesPath, 'utf8');
-        uploadedFiles = JSON.parse(fileData || '{}');
-    } catch (error) {
-        console.error('Error al leer o analizar uploaded-files.json:', error);
-        uploadedFiles = {};
+const textColumnMap = {
+    1499741852: 'texto__1', // Board 1499741852, columna de texto
+    1565676276: 'texto__1', // Board 1565676276, columna de texto
+};
+
+const notesColumnMap = {
+    1499741852: 'texto_largo__1', // Board 1499741852, columna de Notes
+    1565676276: 'texto_largo__1', // Board 1565676276, columna de Notes
+};
+
+const tokenFilePath = path.join(__dirname, 'access-token.json');
+
+// Function to save the access token to a file
+function saveAccessToken(token) {
+    fs.writeFileSync(tokenFilePath, JSON.stringify({ accessToken: token, timestamp: Date.now() }));
+}
+
+// Function to load the access token from a file
+function loadAccessToken() {
+    if (fs.existsSync(tokenFilePath)) {
+        const data = fs.readFileSync(tokenFilePath, 'utf8');
+        return JSON.parse(data);
     }
+    return null;
 }
 
-// Función para guardar los archivos subidos en uploaded-files.json
-function saveUploadedFiles() {
-    fs.writeFileSync(uploadedFilesPath, JSON.stringify(uploadedFiles, null, 2));
-}
+let accessToken = null;
+let tokenExpirationTime = 0;
 
-// Function to obtain the access token from Zoho
-async function getAccessToken() {
-    try {
-        const response = await axios.post(`https://accounts.zoho.eu/oauth/v2/token`, null, {
-            params: {
-                client_id: CLIENT_ID,
-                client_secret: CLIENT_SECRET,
-                grant_type: 'refresh_token',
-                refresh_token: REFRESH_TOKEN
+async function getAccessToken(forceRenew = false) {
+    const savedTokenData = loadAccessToken();
+
+    if (forceRenew || !savedTokenData || Date.now() >= tokenExpirationTime) {
+        try {
+            const response = await axios.post(`https://accounts.zoho.eu/oauth/v2/token`, null, {
+                params: {
+                    client_id: CLIENT_ID,
+                    client_secret: CLIENT_SECRET,
+                    grant_type: 'refresh_token',
+                    refresh_token: REFRESH_TOKEN
+                }
+            });
+            if (response.data && response.data.access_token) {
+                console.log('Access token obtained successfully.');
+                saveAccessToken(response.data.access_token);
+                accessToken = response.data.access_token;
+                tokenExpirationTime = Date.now() + (response.data.expires_in - 60) * 1000;
+                return response.data.access_token;
+            } else {
+                console.error('Unexpected response:', response.data);
+                return null;
             }
-        });
-        if (response.data && response.data.access_token) {
-            console.log('Access token obtained successfully.');
-            return response.data.access_token;
+        } catch (error) {
+            console.error('Error obtaining access token:', error.response ? error.response.data : error.message);
+            return null;
+        }
+    }
+
+    console.log('Using saved access token.');
+    accessToken = savedTokenData.accessToken;
+    tokenExpirationTime = savedTokenData.timestamp + 3600000 - 60000;
+    return savedTokenData.accessToken;
+}
+
+// Función para obtener todos los leads
+async function getAllLeads(accessToken) {
+    let allLeads = [];
+    let pageToken = null;  // Inicializa el pageToken como null
+    let morePages = true;
+    const fields = 'Full_Name,id,Owner,Email,Phone,Mobile,Lead_Status,Notes'; // Incluyendo Notes
+
+    console.log('Fetching all leads from Zoho CRM...');
+
+    while (morePages) {
+        if (Date.now() >= tokenExpirationTime) { // Renueva si el token ha expirado
+            console.log('Token expired, renewing...');
+            accessToken = await getAccessToken(true);
+        }
+
+        try {
+            // Configura los parámetros de la solicitud, incluyendo el page_token si existe
+            const params = {
+                fields: fields,
+                per_page: 200  // Máximo permitido por solicitud
+            };
+            if (pageToken) {
+                params.page_token = pageToken;  // Añade el page_token si existe
+            }
+
+            const response = await axios.get(`${API_DOMAIN}/crm/v3/Leads`, {
+                headers: {
+                    Authorization: `Zoho-oauthtoken ${accessToken}`
+                },
+                params: params
+            });
+
+            const leads = response.data.data || [];
+            const nextPageToken = response.data.info ? response.data.info.next_page_token : null;
+
+            if (leads.length > 0) {
+                allLeads.push(...leads);
+                console.log(`Fetched ${leads.length} leads, total fetched: ${allLeads.length}`);
+                pageToken = nextPageToken; // Asigna el siguiente page_token para la próxima solicitud
+                morePages = pageToken !== null;
+            } else {
+                morePages = false;
+                console.log('No more leads to fetch.');
+            }
+        } catch (error) {
+            if (error.response && error.response.data && error.response.data.code === 'INVALID_TOKEN') {
+                console.log('Invalid token detected, renewing access token...');
+                accessToken = await getAccessToken(true);
+                continue; // Reintentar la solicitud con el nuevo token
+            } else if (error.response && error.response.data.code === 'DISCRETE_PAGINATION_LIMIT_EXCEEDED') {
+                console.error('Pagination limit exceeded:', error.response.data.message);
+                morePages = false;
+            } else {
+                console.error('Error fetching leads:', error.response ? error.response.data : error.message);
+                morePages = false;
+            }
+        }
+    }
+
+    console.log(`Total unique leads fetched: ${allLeads.length}`);
+    return allLeads;
+}
+
+// Función para buscar personas por nombre en Monday.com
+async function findPersonByName(name) {
+    const query = `
+        query {
+            users {
+                id
+                name
+            }
+        }
+    `;
+
+    const config = {
+        method: 'post',
+        url: API_URL,
+        headers: {
+            'Authorization': `Bearer ${API_KEY}`,
+            'Content-Type': 'application/json'
+        },
+        data: JSON.stringify({ query })
+    };
+
+    try {
+        const response = await axios(config);
+        const users = response.data.data.users;
+        const user = users.find(user => user.name.toLowerCase() === name.toLowerCase());
+        if (user) {
+            return user.id;
         } else {
-            console.error('Unexpected response:', response.data);
+            console.log(`User with name ${name} not found.`);
             return null;
         }
     } catch (error) {
-        if (error.response) {
-            console.error('Error response data:', error.response.data);
-        } else {
-            console.error('Error obtaining access token:', error.message);
-        }
+        console.error('Error finding person by name:', error.response ? error.response.data : error.message);
         return null;
     }
 }
 
-// Function to get all patients from Zoho with pagination
-async function getAllPatients(accessToken) {
-    let allPatients = [];
-    let page = 1;
-    let morePages = true;
-
-    console.log('Fetching all patients from Zoho CRM...');
-
-    while (morePages) {
-        try {
-            const response = await axios.get(`${API_DOMAIN}/crm/v3/PatientsNew`, {
-                headers: {
-                    Authorization: `Zoho-oauthtoken ${accessToken}`
-                },
-                params: {
-                    fields: 'id,Name,Email',
-                    page: page,
-                    per_page: 200 // Adjust per page to handle more records at once
-                }
-            });
-
-            const patients = response.data.data;
-            if (patients.length > 0) {
-                allPatients = allPatients.concat(patients);
-                console.log(`Page ${page} fetched with ${patients.length} patients.`);
-                page++;
-            } else {
-                morePages = false;
-                console.log('No more patients to fetch.');
-            }
-        } catch (error) {
-            console.error('Error fetching patients:', error.response ? error.response.data : error.message);
-            morePages = false;
-        }
-    }
-
-    console.log(`Total patients fetched: ${allPatients.length}`);
-    return allPatients;
-}
-
-// Function to get emails of a specific patient from Zoho
-async function getEmailsOfPatient(moduleApiName, patientId, accessToken) {
-    try {
-        console.log(`Fetching emails for patient ID: ${patientId}`);
-        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${patientId}/Emails`;
-        const response = await axios.get(url, {
-            headers: {
-                Authorization: `Zoho-oauthtoken ${accessToken}`
-            }
-        });
-
-        if (response.data && response.data.Emails) {
-            console.log(`Found ${response.data.Emails.length} emails for patient ID: ${patientId}`);
-            return response.data.Emails.map(email => ({
-                subject: email.subject,
-                from: email.from.email,
-                to: email.to.map(to => to.email).join(', '),
-                messageId: email.message_id,
-                content: email.content || 'No content available',
-                sentTime: email.time || 'No date available' // Aquí asegúrate de capturar el campo 'time'
-            }));
-
-        } else {
-            console.log('No emails found or no data available:', response.data);
-            return [];
-        }
-    } catch (error) {
-        console.error('Error fetching emails for patient:', error.response ? error.response.data : error.message);
-        return [];
-    }
-}
-
-// Function to fetch the content of an email from Zoho
-async function getEmailContent(moduleApiName, patientId, messageId, accessToken) {
-    try {
-        const url = `${API_DOMAIN}/crm/v3/${moduleApiName}/${patientId}/Emails/${messageId}`;
-        const response = await axios.get(url, {
-            headers: {
-                Authorization: `Zoho-oauthtoken ${accessToken}`
-            }
-        });
-
-        if (response.data && response.data.email_related_list && response.data.email_related_list.length > 0) {
-            return response.data.email_related_list[0].content || 'No content available';
-        } else {
-            console.log('No email content found or no data available:', response.data);
-            return 'No content available';
-        }
-    } catch (error) {
-        console.error('Error fetching email content:', error.response ? error.response.data : error.message);
-        return 'No content available';
-    }
-}
-
-// Function to clean email content
-function cleanEmailContent(content) {
-    let cleanedContent = htmlToText(content, {
-        wordwrap: 130,
-        preserveNewlines: true
-    });
-
-    CONFIDENTIALITY_NOTICE.forEach(regex => {
-        cleanedContent = cleanedContent.replace(regex, '');
-    });
-
-    // Reemplazar múltiples saltos de línea en la firma por un solo salto de línea
-    cleanedContent = cleanedContent.replace(/(Mobile:.*?)(\n\s*?)(Email:.*?)(\n\s*?)(www\.immucura\.com.*?)(\n\s*?)(Immucura Limited.*?)(\n\s*?)(20 Harcourt Street,.*?)(\n\s*?)(Dublin 2, D02 H364)(\n\s*?)(T:.*?)(\n\s*?)(www\.immucura\.com)/g,
-        '$1\n$3\n$5\n$7\n$9\n$11\n$13');
-
-    // Eliminar saltos de línea múltiples en todo el contenido
-    cleanedContent = cleanedContent.replace(/(\n\s*){3,}/g, '\n\n');
-
-    return cleanedContent.trim();
-}
-
-// Function to create PDF files from emails
-function createPDF(contactName, emailContents, outputDir) {
-    const doc = new PDFDocument();
-    const outputFilePath = path.join(outputDir, `emails-${contactName}.pdf`);
-
-    doc.pipe(fs.createWriteStream(outputFilePath));
-
-    emailContents.forEach((content, index) => {
-        if (index > 0) {
-            doc.text('\n\n\n'); // Dejar tres espacios antes del siguiente correo
-        }
-        // Usa el 'sentTime' del email para formatear la fecha
-        const sentTimeFormatted = moment(content.sentTime).format('MMMM Do YYYY, h:mm:ss a');
-        doc.fontSize(12).text(`MAIL ${index + 1}:\nSent: ${sentTimeFormatted}\nSubject: ${content.subject}\nFrom: ${content.from}\nTo: ${content.to}\n\nContent:\n${content.content}\n\n`, {
-            align: 'left',
-            lineGap: 2
-        });
-    });
-
-    doc.end();
-    console.log(`PDF created for contact: ${contactName}`);
-}
-
-// Function to find an item by email in Monday.com
+// Función para buscar items por email en Monday.com
 async function findItemByEmail(boardIds, email) {
     if (!email) {
         throw new Error("Email is undefined");
@@ -259,7 +202,7 @@ async function findItemByEmail(boardIds, email) {
         let allItems = [];
         let cursor = null;
         let moreItems = true;
-        const emailColumnId = emailColumnMap[boardId]; // Get the correct email column ID
+        const emailColumnId = emailColumnMap[boardId];
 
         while (moreItems) {
             const query = JSON.stringify({
@@ -292,9 +235,9 @@ async function findItemByEmail(boardIds, email) {
             try {
                 const response = await axios(config);
                 if (response.data.errors) {
-                    console.log('Response from item search:', response.data.errors);
+                    console.error('GraphQL Response Errors:', response.data.errors);
                     moreItems = false;
-                    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds before retrying
+                    await new Promise(resolve => setTimeout(resolve, 10000));
                     continue;
                 }
                 const data = response.data.data.items_page_by_column_values;
@@ -302,7 +245,7 @@ async function findItemByEmail(boardIds, email) {
                 cursor = data.cursor;
                 moreItems = cursor !== null;
             } catch (error) {
-                console.error('Error searching item by email:', error);
+                console.error('Error searching item by email:', error.response ? error.response.data : error.message);
                 moreItems = false;
             }
         }
@@ -323,127 +266,135 @@ async function findItemByEmail(boardIds, email) {
     return items.flat();
 }
 
-// Function to upload and add a file to an item in Monday.com
-async function uploadAndAddFileToItem(itemId, filePath, columnId) {
+async function updateMondayColumns(itemId, boardId, ownerName, notes) {
+    // Buscar el ID de la persona en Monday.com por nombre
+    const ownerId = await findPersonByName(ownerName);
+
+    // Asegúrate de que las comillas dobles y otros caracteres especiales estén correctamente escapados
+    const escapedNotes = notes ? notes.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n\\n') : '';
+    const escapedOwnerName = ownerName ? ownerName.replace(/\\/g, '\\\\').replace(/"/g, '\\"') : '';
+
+    // Crear el JSON para las columnas
+    let columnValues = {
+        [textColumnMap[boardId]]: escapedOwnerName,
+        [notesColumnMap[boardId]]: { text: escapedNotes }
+    };
+
+    if (ownerId) {
+        columnValues[ownerColumnMap[boardId]] = { personsAndTeams: [{ id: ownerId, kind: "person" }] };
+    }
+
     const mutation = `
-        mutation($file: File!) {
-            add_file_to_column (item_id: ${itemId}, column_id: "${columnId}", file: $file) {
-                id
-            }
+        mutation {
+            change_multiple_column_values(item_id: ${itemId}, board_id: ${boardId}, column_values: "${JSON.stringify(columnValues).replace(/"/g, '\\"')}")
+            { id }
         }
     `;
-    const formData = new FormData();
-    formData.append('query', mutation);
-    formData.append('variables[file]', fs.createReadStream(filePath));
+
+    const config = {
+        method: 'post',
+        url: API_URL,
+        headers: {
+            'Authorization': `Bearer ${API_KEY}`,
+            'Content-Type': 'application/json'
+        },
+        data: JSON.stringify({ query: mutation })
+    };
 
     try {
-        const response = await axios.post(FILE_UPLOAD_URL, formData, {
-            headers: {
-                'Authorization': `Bearer ${API_KEY}`,
-                ...formData.getHeaders()
-            }
-        });
+        const response = await axios(config);
+        if (response.data.errors) {
+            console.error('Error updating Monday columns:', response.data.errors);
 
-        console.log('File added to column:', response.data);
+            // Manejar el error específico de asignación de persona
+            if (response.data.errors.some(e => e.message.includes('ColumnValueException'))) {
+                console.log(`Error assigning person with ID ${ownerId} on board ${boardId}. Skipping person assignment.`);
+                // Volver a intentar la mutación sin la columna "people"
+                delete columnValues[ownerColumnMap[boardId]];
+                const retryMutation = `
+                    mutation {
+                        change_multiple_column_values(item_id: ${itemId}, board_id: ${boardId}, column_values: "${JSON.stringify(columnValues).replace(/"/g, '\\"')}")
+                        { id }
+                    }
+                `;
+                const retryConfig = {
+                    method: 'post',
+                    url: API_URL,
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    data: JSON.stringify({ query: retryMutation })
+                };
+                try {
+                    const retryResponse = await axios(retryConfig);
+                    if (retryResponse.data.errors) {
+                        console.error('Retry error updating Monday columns:', retryResponse.data.errors);
+                    } else {
+                        console.log('Successfully updated Monday columns without person assignment:', retryResponse.data);
+                    }
+                } catch (retryError) {
+                    console.error('Error retrying Monday columns update:', retryError.response ? retryError.response.data : retryError.message);
+                }
+            }
+        } else {
+            console.log('Successfully updated Monday columns:', response.data);
+        }
     } catch (error) {
-        console.error('Error in uploadAndAddFileToItem:', error.response ? error.response.data : error.message);
+        console.error('Error updating Monday columns:', error.response ? error.response.data : error.message);
     }
 }
 
-// Function to process the file upload to Monday.com
-async function processFileUpload(email, filePath) {
-    const boardIds = Object.keys(boardColumnMap).map(Number);
-    const items = await findItemByEmail(boardIds, email);
-
-    if (items.length > 0) {
-        console.log(`Email found in boards for ${email}:`, items);
-        for (const item of items) {
-            const columnId = boardColumnMap[item.boardId];
-            if (columnId) {
-                const fileName = path.basename(filePath);
-                // Verificar si el archivo ya fue subido para este tablero y ítem
-                if (!uploadedFiles[item.boardId]) {
-                    uploadedFiles[item.boardId] = {};
-                }
-                if (!uploadedFiles[item.boardId][email]) {
-                    uploadedFiles[item.boardId][email] = [];
-                }
-                if (uploadedFiles[item.boardId][email].includes(fileName)) {
-                    console.log(`File ${fileName} already uploaded for ${email} on board ${item.boardId}`);
-                } else {
-                    console.log(`Uploading file to item ${item.id} on board ${item.boardId}`);
-                    await uploadAndAddFileToItem(item.id, filePath, columnId);
-                    uploadedFiles[item.boardId][email].push(fileName);
-                    saveUploadedFiles(); // Guardar los archivos subidos después de cada subida
-                    console.log(`File uploaded to item ${item.id} on board ${item.boardId}`);
-                }
-            } else {
-                console.log(`Column ID not found for board ${item.boardId}`);
-            }
-        }
-    } else {
-        console.log(`Email not found in any board for ${email}`);
-    }
-}
-
-// Main function
+// Función principal para procesar leads y actualizar Monday.com
 async function main() {
-    const accessToken = await getAccessToken();
-    if (accessToken) {
-        const patients = await getAllPatients(accessToken);
-        console.log(`Processing ${patients.length} patients...`);
-
-        for (const [index, patient] of patients.entries()) {
-            const fullName = patient.Name || 'Unknown Name';
-            const patientEmail = patient.Email || 'no-email';
-            console.log(`\nProcessing patient ${index + 1}/${patients.length}: ${fullName} (${patientEmail})`);
-
-            const emails = await getEmailsOfPatient('PatientsNew', patient.id, accessToken);
-            if (emails.length > 0) {
-                const emailContents = [];
-                for (const [emailIndex, email] of emails.entries()) {
-                    console.log(`\nProcessing email ${emailIndex + 1} for ${patientEmail}:`);
-                    console.log(`Subject: ${email.subject}`);
-                    console.log(`From: ${email.from}`);
-                    console.log(`To: ${email.to}`);
-                    console.log(`Sent: ${email.sentTime}`);
-
-                    const emailContent = await getEmailContent('PatientsNew', patient.id, email.messageId, accessToken);
-                    const cleanedContent = cleanEmailContent(emailContent);
-
-                    emailContents.push({
-                        subject: email.subject,
-                        from: email.from,
-                        to: email.to,
-                        content: cleanedContent,
-                        sentTime: email.sentTime
-                    });
-
-                    console.log(`Content of email ${emailIndex + 1}:\n${cleanedContent}\n`);
-                }
-
-                const baseDir = path.join(__dirname, 'emails-downloads');
-                const patientDir = path.join(baseDir, patientEmail);
-                if (!fs.existsSync(baseDir)) {
-                    fs.mkdirSync(baseDir);
-                }
-                if (!fs.existsSync(patientDir)) {
-                    fs.mkdirSync(patientDir);
-                }
-
-                const pdfPath = path.join(patientDir, `emails-${fullName}.pdf`);
-                createPDF(fullName, emailContents, patientDir);
-                await processFileUpload(patientEmail, pdfPath);
-            } else {
-                console.log(`No emails to display for patient: ${patientEmail}`);
-            }
-        }
-        console.log("TRABAJO TERMINADO");
-        process.exit(0); // Exit the process after all patients are processed
-    } else {
-        console.log("Failed to obtain an access token.");
-        process.exit(1); // Exit with an error code
+    let accessToken = await getAccessToken();
+    if (!accessToken) {
+        console.log('Failed to obtain an access token.');
+        return; // Evitar que el script se detenga abruptamente
     }
+
+    const leads = await getAllLeads(accessToken);
+    console.log(`Processing ${leads.length} leads...`);
+
+    if (!leads.length) {
+        console.log("No leads were fetched, exiting.");
+        return;
+    }
+
+    const boardIds = Object.keys(emailColumnMap).map(Number); // Obteniendo los IDs de los tableros
+
+    let leadCounter = 0;
+
+    for (const lead of leads) {
+        leadCounter++;
+        const leadEmail = lead.Email;
+
+        console.log(`\n\n\nProcessing Lead ${leadCounter}: ${lead.Full_Name}`);
+
+        if (!leadEmail) {
+            console.log(`Lead ${lead.Full_Name} has no email, skipping.`);
+            continue;
+        }
+
+        const items = await findItemByEmail(boardIds, leadEmail);
+
+        if (items.length > 0) {
+            for (const item of items) {
+                console.log(`Found and updating item ${item.id} on board ${item.boardId} for lead ${lead.Full_Name}`);
+                await updateMondayColumns(item.id, item.boardId, lead.Owner.name, lead.Notes || '');
+            }
+        } else {
+            console.log(`No matching items found for email ${leadEmail}`);
+        }
+    }
+
+    console.log('***************************** WORK DONE ! *****************************');
+    console.log('***************************** WORK DONE ! *****************************');
+    console.log('***************************** WORK DONE ! *****************************');
+    console.log('***************************** WORK DONE ! *****************************');
+    console.log('***************************** WORK DONE ! *****************************');
+    console.log('***************************** WORK DONE ! *****************************');
+    console.log('***************************** WORK DONE ! *****************************');
 }
 
 main();
